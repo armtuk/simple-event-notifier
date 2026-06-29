@@ -1,0 +1,14 @@
+# AI agent config (symlinked from plexq-ai-resources)
+.claude
+.agents/skills
+.agents/guidance
+.agents/languages
+.agents/frameworks
+.agents/cache
+.agents/autopilot
+.agents/project-tooling
+.agents/code-examples
+.agents/*.md
+.agents/plans/.active
+# Session files
+*.session.id
