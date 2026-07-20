@@ -111,3 +111,43 @@ Ordered by dependency. Each is a coherent ~1hr-review increment (not a micro-PR)
   must exist before `terraform init` can use them; the story must define how that is seeded.
 - **Event-model is load-bearing.** Getting the schema and key codec right early avoids churn
   across every later producer/consumer; treat it as a versioned interface from day one.
+
+## Execution status (2026-07-19)
+
+| Ticket | Plan file | Story | Status |
+| :--- | :--- | :--- | :--- |
+| AWE-149 | `monorepo-bootstrap.md` | Monorepo & tooling bootstrap | **Completed** |
+| AWE-150 | `event-model-package.md` | Shared event-model package | **Completed** |
+| AWE-151 | `infra-s3-and-dns.md` | IaC: S3 event bucket & Route53 delegated zone | **Implementation Adjustment** — code complete, live verification deferred |
+| AWE-152 | `desktop-notifier-daemon.md` | Desktop notifier daemon | **Implementation Adjustment** — code complete, real-bucket E2E deferred |
+
+The feature stays `Implementing` rather than `Completed` because **AWE-151 and AWE-152 are not
+terminal**. This work was executed under an explicit **code-and-dry-run fence**: no command that
+creates, modifies, or deletes real AWS resources was run, so no bucket was created and **no NS
+records were written into the live `fifthdimensionengineering.com` zone.** Each of those two stories
+carries a `## Deferred verification` section listing exactly which acceptance criteria remain
+unverified and the command that closes each one.
+
+### Feature acceptance criteria
+
+| Criterion | Status |
+| :--- | :--- |
+| `pnpm install && pnpm build && pnpm lint && pnpm test` succeed from a clean checkout | **Met** (plus `pnpm typecheck`; 119 specs green) |
+| The event model validates, rejects with a typed error, and round-trips event ⇄ object key | **Met** (59 specs, exemplar-driven) |
+| `terraform plan` is clean | **Met** — `Plan: 8 to add, 0 to change, 0 to destroy`, parent-zone data lookup resolved against the real account |
+| `terraform apply` creates the bucket and delegated zone; `dig NS …` resolves; re-`plan` shows no drift | **Unverified** — blocked by the fence, see AWE-151 |
+| A valid event object in the bucket produces a macOS notification within one poll interval | **Partially met** — the notification path was proven end to end locally with real macOS notifications from real exemplar bodies, but not against a provisioned bucket; see AWE-152 |
+| A malformed object is logged and skipped without crashing the daemon | **Met** (unit-verified against the real poller code path) |
+| Missing AWS credentials, an unreachable bucket, and an unparseable object each produce a clear log line rather than a crash | **Met** — all three exercised against the built daemon locally |
+| Guidance-conformance pass per story | **Met** — biome (incl. `noEnum`, `noExplicitAny`) + strict tsc clean; the rules no linter can express are recorded in `CLAUDE.md` |
+
+### Cross-cutting decisions taken during execution
+
+- `rewriteRelativeImportExtensions` replaces `allowImportingTsExtensions` so the guidance's
+  `./foo.ts` import convention survives tsup's emit. Recorded in `CLAUDE.md`.
+- The event model's failure channel is a single tagged `EventModelError` with a discriminating
+  `reason`, not a bare string — consumers branch on it, and the daemon does.
+- Terraform state locking uses native S3 conditional writes; the DynamoDB lock table in AWE-151's
+  original acceptance criteria is **superseded**. ADR `2026-07-19-1900-iac-foundation` records it.
+- `.agents/cache/effect/**` does not exist in this repo, so the Effect API was verified against the
+  installed typings. **Recommend running `/update-effect-docs`** before the next Effect story.

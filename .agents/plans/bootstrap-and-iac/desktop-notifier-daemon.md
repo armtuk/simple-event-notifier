@@ -2,12 +2,12 @@
 id: AWE-152
 title: Desktop notifier daemon (end-to-end S3 → notification)
 type: story
-status: Pending
+status: Implementation Adjustment
 parent: ./feature.md
 branch: feat/bootstrap-and-iac
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-28
-updated: 2026-06-28
+updated: 2026-07-19
 ---
 
 # Story: Desktop notifier daemon (end-to-end S3 → notification)
@@ -233,3 +233,68 @@ Execute in order.
 - Level 4 — Manual E2E: start the daemon (`node apps/desktop-notifier/dist/index.js`), then
   `aws s3 cp exemplars/valid-github.json s3://<bucket>/<built-key>` and confirm a desktop
   notification appears within the poll interval; kill + restart and confirm no re-notify.
+
+## Execution notes (2026-07-19)
+
+Deltas from the plan as written, and why:
+
+- **`classify.ts` added** between the poller and the notifier: the plan put parsing in the daemon
+  loop, but "sort polled bodies into events and rejects" is a pure, total function with its own axis
+  of change and its own failure semantics. Keeping it out of `daemon.ts` is what makes "a malformed
+  object is logged and skipped" a unit test rather than an integration test.
+- **`toNotification` takes only the `Event`** and `daemon.ts` receives a sliced `DaemonSchedule`
+  (`pollIntervalMs`, `maxBackoffMs`) rather than the whole `DaemonConfig` — slice-don't-dump.
+- **`parseConfig` takes the environment as an argument** instead of reading `process.env`. The whole
+  process boundary (env, signals, exit code) is confined to `index.ts`; every module beneath it is
+  argument-driven and therefore testable.
+- **Backoff jitter takes an injectable `random`**, so `nextDelayMs` is deterministic under test.
+- **`fallbackNotifier` latches.** Discovered while running the E2E: under pnpm on macOS,
+  `toasted-notifier`'s bundled `terminal-notifier` helper is installed **without its executable
+  bit** (the package ships no postinstall to chmod it), so every call fails `EACCES`. Adding it to
+  `onlyBuiltDependencies` does not help — there is no install script to run. The `auto` notifier
+  already fell through to the shell adapter; it now remembers the failure, so the dead helper costs
+  one failed spawn per **process** instead of one per **event**. **This is the feature's flagged
+  `toasted-notifier` risk actually materializing, and the adapter design absorbed it** — the fix was
+  confined to `notify.ts`.
+- **Mocks:** `.agents/tests.md` prefers a real bucket with fixtures. The unit suite uses
+  `testing/fake-s3.ts` — a **real** `S3Client` instance with only `send` replaced (the paginator
+  rejects anything that is not a real instance), so the production
+  `paginateListObjectsV2`/`GetObjectCommand` path is genuinely under test. The real-bucket suite
+  exists as `poller.integration.spec.ts` and is opt-in via `TEST_EVENT_BUCKET`; it could not run
+  here because the bucket does not exist yet and writing to a real bucket is outside the
+  side-effect fence.
+- **`daemon.e2e.spec.ts` added** (opt-in via `DESKTOP_NOTIFIER_E2E=1`): drives the real notifier
+  from real exemplar object bodies, so the object body → `parseEvent` → `toNotification` → OS chain
+  is provable on a machine with no bucket provisioned.
+
+Result: 61 specs green across config, classify, notification-content, notify, poller, state and
+daemon; `biome check` and `tsc --noEmit` clean; `tsup` produces a runnable `dist/index.js`.
+
+## Deferred verification — NOT met under the code-and-dry-run fence
+
+AWE-152's end-to-end criterion depends on the AWE-151 bucket, which was not applied (see that
+story's deferred section). The following are **unverified**:
+
+| Acceptance criterion | Status | Command the user must run to close it |
+| :--- | :--- | :--- |
+| Putting a valid event object into the **provisioned** bucket produces a desktop notification within one poll interval | **Unverified** | apply AWE-151, then `EVENT_BUCKET=… node apps/desktop-notifier/dist/index.js` and `aws s3 cp` an exemplar to the built key |
+| `pollOnce` against a real bucket returns only objects after the mark | **Unverified** | `TEST_EVENT_BUCKET=<disposable bucket> AWS_REGION=… pnpm --filter @personal-events/desktop-notifier test` |
+| A restart against a real bucket does not re-notify | **Unverified** | run the daemon, `aws s3 cp` an event, kill and restart, confirm silence |
+
+### What WAS verified locally
+
+- **Real desktop notifications were raised on this macOS machine** by
+  `DESKTOP_NOTIFIER_E2E=1 pnpm --filter @personal-events/desktop-notifier test` and by the
+  `shellNotifierAdapter` spec — the notification path itself is proven end to end, including
+  AppleScript quoting of a title containing `"` and a message containing a newline.
+- **Missing credentials:** running with an empty credential environment logs
+  `No usable AWS credentials; the daemon cannot poll the event bucket … "Could not load credentials
+  from any providers"` and exits 1. No crash.
+- **Unreachable bucket:** running against a non-existent bucket logs
+  `Poll failed; backing off before the next attempt … "The specified bucket does not exist"` on each
+  tick, backs off to the configured ceiling, keeps the mark, and shuts down cleanly on `SIGTERM`
+  (`Shutdown signal received; finishing the current tick` → `Stopped`). No crash, no state written.
+- **Missing configuration:** starting with no `EVENT_BUCKET` prints
+  `Invalid daemon configuration: DaemonConfig └─ ["bucket"] └─ is missing` and exits 1.
+- **Malformed object handling, mark advance, pagination, restart-without-re-notify, and same-
+  millisecond events** are all covered by the unit suite against the fake S3 transport.
