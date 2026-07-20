@@ -174,7 +174,7 @@ Extracted from `.agents/general.md`, `.agents/languages/typescript/*`, `.agents/
     const { channel, ...match } = trigger
     const fields = Object.entries(match).sort(([a], [b]) => a.localeCompare(b))
       .map(([k, v]) => `${k}=${v}`).join("&")
-    return `${channel} ${fields}`
+    return `${channel}:${fields}`
   }
   ```
   The framework stores triggers as `channel`-tagged string-records; the *non-confusable

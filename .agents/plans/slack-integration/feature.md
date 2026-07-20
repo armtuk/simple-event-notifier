@@ -2,15 +2,26 @@
 id: slack-integration
 title: Slack Integration (Socket Mode)
 type: feature
-status: In Planning
+status: Abandoned
 parent: none
 depends-on: [github-integration]
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-29
-updated: 2026-06-29
+updated: 2026-07-19
 ---
 
 # Feature: Slack Integration (Socket Mode)
+
+> **ABANDONED 2026-07-19 — shelved for lack of Slack app-creation permissions.** Receiving
+> Slack events requires creating an internal Slack **App** (bot token `xoxb-` + app-level token
+> `xapp-`), and the user does not currently have rights to create one in the target workspace.
+> There is **no personal-token-only path** for Slack, so no fallback ingestion mechanism exists
+> to plan around it (unlike GitHub, which has the Notifications-API poller). Nothing else in the
+> plans tree depends on this feature, so shelving it blocks no other work.
+>
+> Per `.agents/guidance/planning-artifacts.md` §3, `Abandoned` is **terminal and never reopened**.
+> If Slack permissions are granted later, re-plan it as a **new feature** (`/plan-feature`) rather
+> than resurrecting these files; the analysis below stays valid as reference input.
 
 > **Dependency note:** the recorded `depends-on: [github-integration]` is coarser than the
 > real edge. The **only hard prerequisite** is `integration-core` (**AWE-153**, which lives in

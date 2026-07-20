@@ -69,9 +69,12 @@ link) to drive a real triage workflow rather than just a notification stream.
 - **Event semantics:** `eventType` is `alert` (needs attention) or `notification` (info);
   `priority` is 1–8; `acknowledged` and `handled` are independent boolean flags a client can
   flip to drive triage.
-- **First sources to support:** GitHub, LLM agents, Slack. The broader source list (email,
-  calendar, package delivery, incident pages, Jira, Airtable, Confluence) is the roadmap, not
-  the first cut.
+- **First sources to support:** GitHub and LLM agents (Claude Code hooks). **Slack is shelved
+  as of 2026-07-19** — ingesting Slack requires creating an internal Slack **App**, and there is
+  no personal-token-only fallback; the `slack-integration` feature is `Abandoned` pending
+  workspace permissions and would be re-planned as a new feature if they are granted. The broader
+  source list (email, calendar, package delivery, incident pages, Jira, Airtable, Confluence)
+  is the roadmap, not the first cut.
 
 ## Links
 

@@ -2,15 +2,18 @@
 id: AWE-159
 title: Slack Socket Mode client (Railway service → S3)
 type: story
-status: Pending
+status: Abandoned
 parent: ./feature.md
 branch: feat/slack-integration
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-29
-updated: 2026-06-29
+updated: 2026-07-19
 ---
 
 # Story: Slack Socket Mode client (Railway service → S3)
+
+> **ABANDONED 2026-07-19** along with its parent feature `slack-integration` — shelved for lack
+> of Slack app-creation permissions. See `./feature.md` for the rationale.
 
 ## Definition
 
