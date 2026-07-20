@@ -19,6 +19,12 @@ workspace file), linter/formatter is **biome**.
 
 Root commands: `pnpm install`, `pnpm build`, `pnpm lint`, `pnpm test`, `pnpm typecheck`.
 
+**Prerequisites:** Node ≥ 24, pnpm, and the **Terraform CLI** (≥ 1.11). Terraform is required for
+`pnpm lint` and `pnpm typecheck`-adjacent infra tasks because the `infra` workspace member's `lint`
+is `terraform fmt -check -recursive .` — without the binary those tasks fail on a missing command,
+not on a lint error. This is a project whose whole substrate is Terraform, so the tool is assumed
+rather than made optional.
+
 ## TypeScript conventions this repo pins
 
 - **Node ≥ 24**, ESM only (`"type": "module"`).
@@ -45,6 +51,13 @@ Biome covers no-semicolons, double quotes, width 140, `noExplicitAny`, `noEnum`,
 - **Result types** — return `Either`/tagged unions, never bare `null`/`undefined`.
 - **`Record<K, T>` lookups** instead of `if`/`else if` chains keyed on one discriminator.
 - **Arrow functions** by default; `async` on every promise-returning function.
+- **A long-running loop must not chain each iteration's promise to the next.** Returning a recursive
+  call from an `async` function makes the first promise unable to settle until the last one does, so
+  pending promises accumulate for the life of the process. Schedule the next iteration from a timer
+  callback and discard the previous promise — see `apps/desktop-notifier/src/daemon.ts` → `runDaemon`.
+  This is here because it is **not testable cheaply**: both candidate discriminators were measured
+  and neither works (async stack depth does not grow across the recursive `await`, and heap retention
+  does not diverge because the call is in tail position). It is a review responsibility.
 
 ## Documented carve-outs from the shared guidance
 
@@ -57,9 +70,20 @@ not on this list follows `.agents/` as written.
   worse forced into an `else`, and the rule's real target is *branch selection* on one discriminator
   — which must still use a `Record` lookup. A guard clause selects nothing; it exits. This exemption
   covers guards that return or throw immediately, nothing more.
-- **`ENV` accepts `local` in addition to `.agents/guidance/logging.md`'s
-  `["dev","qa","stage","prod"]`.** `.agents/guidance/aws.md` lists `local` among this project's
-  environments, and the desktop notifier's ordinary home is a laptop. It is an explicitly recognized
-  value, not a silent fallback — an unrecognized `ENV` still fails startup.
+- **The project has one environment vocabulary: `local`, `dev`, `qa`, `staging`, `prod`** —
+  `.agents/guidance/aws.md`'s list. It is used verbatim on both sides: the Terraform `env` variable
+  (both roots) validates against it, and the daemon's `ENV` is a `Schema.Literal` over the same five.
+  It differs from `.agents/guidance/logging.md`'s `["dev","qa","stage","prod"]` in two ways, and this
+  single sentence is the reason for both:
+  - **`local` is included.** The desktop notifier's ordinary home is a laptop; refusing the project's
+    own default environment would make it unusable out of the box.
+  - **The third environment is spelled `staging`, not `stage`.** One spelling has to win, because the
+    same value names S3 buckets and DNS labels on the Terraform side and stamps log records on the
+    TypeScript side — two spellings for one concept is the actual defect. `aws.md`'s spelling wins
+    because its values become durable, externally-visible resource names.
+
+  These are explicit literals, never fallbacks: an unrecognized `ENV` fails startup, which is the
+  harm `logging.md`'s closed set exists to prevent. `infra/*/variables.tf` and
+  `apps/desktop-notifier/src/config.ts` both point back here.
 - **`rewriteRelativeImportExtensions` replaces `allowImportingTsExtensions`** — see the TypeScript
   section above.

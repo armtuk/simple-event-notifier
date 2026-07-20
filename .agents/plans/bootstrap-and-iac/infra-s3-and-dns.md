@@ -306,10 +306,13 @@ Applied after the independent R1 pass (`claude-automated-code-review.md` → `##
   left implicit.
   - Resource addresses moved to `module.event_log.*` / `module.state.*`. **No state exists yet, so no
     `terraform state mv` is required** — but if this branch is ever rebased onto an applied state, a
-    `state mv` per resource is the migration.
+    `state mv` per resource is the migration. The bootstrap root's lifecycle **rule id** also changed,
+    from `trim-superseded-state-versions` to the module's `trim-superseded-versions`; the retention
+    values are identical, and because a rule id is a child of `aws_s3_bucket_lifecycle_configuration`
+    it is an in-place update of that resource, not a destroy.
   - **Re-planned after the refactor:** still `Plan: 8 to add, 0 to change, 0 to destroy`, the same
-    eight resources, the same parent-zone lookup (`Z022596723T54QKGKXEYR`), and all three lifecycle
-    rules intact (`tier-current-versions` 90d→STANDARD_IA / 365d→GLACIER_IR, `trim-superseded-versions`
+    eight resources, the same parent-zone lookup (`Z022596723T54QKGKXEYR`), and — in the
+    `personal-events` root — all three lifecycle rules intact (`tier-current-versions` 90d→STANDARD_IA / 365d→GLACIER_IR, `trim-superseded-versions`
     keep-5 / 180d, `abort-incomplete-uploads` 7d).
 - **#16 MINOR (docs) — `infra/README.md` claimed `pnpm … validate` was an offline check; it was not.**
   The script was a bare `terraform validate` with no `init`, which fails on a clean checkout

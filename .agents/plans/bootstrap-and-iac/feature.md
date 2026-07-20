@@ -175,7 +175,38 @@ Recorded rather than fixed on this branch — captured so they are future work, 
 
 | # | Item | Why it is deferred |
 | :-- | :--- | :--- |
+| R2-1 | **The high-water mark is over producer-supplied timestamps, so an object written with a key that sorts below the current mark is never delivered.** Two live routes, same permanence as the R1 blocker: (a) **same-instant tie-break** — within one millisecond keys order by `eventType` → `priority` → `source` → `name`, and `alert` < `notification`, so a producer stamping one batch with a single `toISOString()` and PutObject-ing sequentially can write B then A; a poll landing between the two advances the mark past A forever. (b) **producer clock skew** — a slow-clocked machine writes below a mark a fast one already set. | **Needs the same product decision as #12** and should be asked in the same breath. The fix is a lookback poll (`StartAfter = max(mark − lookbackWindow, seed)`) plus a delivered-key set in `state.json` so a late or skewed write inside the window is still delivered exactly once; the window size *is* the maximum producer skew the system tolerates, which is the owner's call. Deliberately not implemented on this branch. `poller.ts`'s docblock now states the limitation accurately (it previously asserted the opposite), and `poller.spec.ts` carries a characterization test pinning both routes so the follow-up fix has to turn them green consciously. |
 | #11 | The schema accepts values that cannot survive the key contract: `isoInstantPattern` is shape-only, so impossible instants (`2026-13-45T99:99:99.000Z`) pass and will `NaN` in any consumer doing `new Date(...)`; and `noDotPattern` forbids only `.`, so `source`/`name` may contain `/` (silently turning the key into a prefix), spaces, or control characters. | Both are real tightenings, but they narrow an already-published contract's accepted set. Now that #1 pins the fraction to three digits, `new Date(s).toISOString() === s` is an exact round-trip check and costs nothing — worth doing as a deliberate change with its own exemplars, not folded into a review-fix round. |
 | #12 | **Needs a product decision, not an engineering one.** A valid event whose *notification* fails is skipped permanently, because the mark advances over every listed key. Combined with `fallbackNotifier`'s latch, a machine where no notifier works (headless session, missing `notify-send`, TCC-denied `osascript`) logs an error per event and drops all of them, unreplayable. There is also no DLQ/quarantine anywhere, which `.agents/tests.md` names as a thing to assert on. | The bucket is the permanent source of record, so nothing is *lost* — but a consumer silently deciding an event was never seen is a semantics choice the owner should make: at-most-once (today) vs. retry-until-delivered vs. quarantine-and-continue. **Ask the user which they want** before implementing. Advancing past *unparseable* objects is separate and is correct as-is — the alternative is a poison pill that stalls every later event. |
 | #15 | One tick fans out an unbounded `Promise.all` over every new key. In steady state that is a handful; after a week asleep, or on the first run of the `--backfill` flag the plan anticipates, it is one concurrent `GetObject` per object in the window — enough to hit SDK socket limits and turn a recoverable catch-up into a whole-tick failure. | Needs a `maxObjectsPerTick` in `DaemonSchedule` and a chunked fetch. It is a real robustness gap but only bites on a large catch-up window, which cannot happen until the bucket exists and has history. Natural companion to the `--backfill` story. |
 | #20 | Dotted S3 bucket names force path-style addressing and rule out a same-name CloudFront origin later. | Not a defect — it follows `.agents/guidance/aws.md`'s naming convention exactly. Recorded as an accepted trade-off in ADR `2026-07-19-1900-iac-foundation`; revisit only if the bucket must front a CloudFront distribution. |
+
+## R2 code review — 2026-07-19
+
+A second independent pass (`claude-automated-code-review.md` → `## R2 — 2026-07-19`) returned
+**0 blockers, 1 major, 7 minor, 4 nits**, and its fix audit confirmed every R1 fix genuinely resolves
+its defect — *"nothing was found to be superficially patched but still broken."*
+
+All twelve findings are dispositioned. Two are worth surfacing at feature altitude:
+
+- **R2-1 (major)** is the part of the R1 blocker's invariant that pinning the timestamp width did not
+  close: key order equals *chronological* order for distinct instants, but never equalled *write*
+  order. Recorded above as a follow-up candidate, and `poller.ts` no longer claims otherwise. The
+  fix is deliberately deferred because it carries the same product decision as #12.
+- **R2-2 (minor)** was the R1 #7 dedup silently re-enabling contract drift one layer down:
+  `turbo.json`'s explicit `inputs` array omitted `exemplars/**`, so editing a canonical exemplar
+  invalidated no hash and the consumer's suite replayed a cached **PASS**. Reproduced, fixed, and the
+  fix verified by drifting an exemplar and confirming the consumer suite genuinely re-runs and fails.
+
+**R2-4 disputed in part.** Both discriminators R2 proposed for the daemon-loop regression guard were
+measured and neither works: async stack depth does not grow across the recursive `await` (5 frames vs
+3), and heap retention does not diverge because the recursive call is in tail position. R2's
+alternative was taken instead — the spec is renamed to what it actually tests and the non-chaining
+shape is recorded in `CLAUDE.md` as a review responsibility.
+
+**R2-6 supersedes the earlier `local`-only carve-out.** The project now has one environment
+vocabulary — `local`, `dev`, `qa`, `staging`, `prod` — applied verbatim in Terraform and TypeScript
+and stated once in `CLAUDE.md`. Both halves point back at it.
+
+**Awaiting a user ruling:** the environment-vocabulary deviation from `logging.md` (flagged by the
+coordinator), and the delivery-semantics question shared by #12 and R2-1.

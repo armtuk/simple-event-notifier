@@ -303,7 +303,7 @@ story's deferred section). The following are **unverified**:
 ## R1 review fixes (2026-07-19)
 
 Applied after the independent R1 pass (`claude-automated-code-review.md` → `## R1 — 2026-07-19`).
-Spec count rose 60 → 87.
+Spec count rose 60 → 86 passing (91 including the five opt-in specs).
 
 - **#2 MAJOR — `runDaemon` retained one promise and one async frame per tick, forever.** Returning
   the recursive call from an `async` function chains every tick's promise to the next, so the first

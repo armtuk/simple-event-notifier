@@ -540,3 +540,505 @@ now and expensive after the first `apply`. **#2–#7** should land in the same f
 **#6** also correct claims in the plan files, which are the merge's audit trail). **#8–#20** are
 reasonable follow-ups; **#12**'s quarantine half and **#15** are natural candidates for a follow-up
 story rather than this branch.
+
+---
+
+## R2 — 2026-07-19
+
+**Reviewer:** independent R2 (fresh eyes; did not write the code and was not the R1 reviewer)
+**Diff reviewed:** `git diff auto/execute-remaining-bootstrap-github..feat/bootstrap-and-iac` (96 files), with the four fix commits `e911e4f..HEAD` read individually
+**Guidance loaded in full:** `.agents/general.md`, `formatting.md`, `tests.md`, `languages/typescript/{typescript,typescript-testing,object-types-typescript}.md`, `frameworks/node/preferences.md`, `frameworks/effect/effect.md`, `guidance/{aws,logging,adr,now}.md`, `code-examples/typescript/src/looping.ts`
+
+### Verdict
+
+**Findings — 0 blockers, 1 major, 7 minor, 4 nits.**
+
+The fix round is genuinely good. Every R1 item marked fixed was checked against the source and, where
+possible, probed at runtime against the built package — none of them is papered over, and none
+introduced a functional regression. The blocker fix (#1) is correct as far as it goes and is now
+guarded by specs that would catch a regression. The daemon rewrite (#2) neither leaks frames nor
+truncates work, and shutdown genuinely completes the in-flight tick. The codec change (#5) is
+byte-stable on adversarial input and no consumer still assumes a `URL` instance. The Terraform module
+is behaviourally equivalent for both roots. The plan-file corrections are accurate.
+
+The one major is not a fix that went wrong — it is the part of the blocker's own invariant the fix
+round did not close and did not record, while the surrounding comment asserts the opposite.
+
+### Independent verification performed
+
+| Check | Result |
+| :--- | :--- |
+| `pnpm install` | clean, lockfile up to date |
+| `pnpm build --force` | 2/2 tasks green (incl. the new `dist/testing/exemplars.{js,d.ts}` entry) |
+| `pnpm lint --force` | 3/3 green — biome clean over 33 files, `terraform fmt -check -recursive .` clean |
+| `pnpm test --force` | **173 passed, 5 skipped** (87 event-model + 86 desktop-notifier). The `feature.md` claim of 173 is **accurate**. |
+| `pnpm typecheck --force` | 3/3 green |
+| `terraform fmt -check -recursive infra` | clean |
+| `pnpm --filter @personal-events/infra validate` | **Success** for both `bootstrap/` and `personal-events/` — the R1 #16 fix is real |
+| `turbo run test --dry=json` inputs inspection | see finding R2-2 |
+| Codec probed at runtime against `dist/index.js` | see fix audit and finding R2-1 |
+| Diff scanned for `AKIA`/`ASIA`/`BEGIN … PRIVATE KEY`/`aws_secret_access_key`/`.claude/`/`AGENTS.md`/`*.tfstate` | **none present** |
+| Diff scanned for applied side effects | **none** — every `terraform apply` occurrence is documentation or an npm script; no `.tfstate`, no `backend.hcl`, `.gitignore` covers both |
+
+### Fix audit — did each R1 fix actually resolve the defect?
+
+| R1 # | Verdict | Evidence |
+| :--- | :--- | :--- |
+| **#1** BLOCKER (timestamp width) | **Fixed, with a residual** | `isoInstantPattern` and the timestamp group of `eventKeyPattern` are both `\.\d{3}Z`. Because the instant is now fixed at 24 chars and position 24 is always `.`, any two keys with *distinct* instants resolve their comparison inside the timestamp — so lexicographic order **is** chronological order across the whole key for distinct instants. The `p(\d)` tightening (#10) also fixes the priority segment's width, so the tie-break segments are stable too. `advanceMark` is unchanged and remains correct (`reduce` to the lexicographic max, never moves backwards — pinned by `poller.spec.ts`). **Residual:** for *equal* instants the tie-break is `eventType` → `priority` → `source` → `name`, and the mark is a high-water mark over the whole key — see finding **R2-1**. |
+| **#2** MAJOR (daemon loop) | **Fixed, correctly** | `runDaemon` now resolves one outer promise and schedules each tick from the previous tick's `.then`, discarding the tick promise (`void`). Nothing chains: the only retained state is `state`, `ticking`, and one timer handle, so frames unwind. Shutdown: `onAbort` stops immediately only when `!ticking`; an abort *during* a tick is a no-op and the tick's own continuation calls `stop()` after `deliverAll` and `advance` have completed. The spec `"stops after finishing the tick it is in when aborted mid-run"` aborts synchronously (the promise executor runs `tick()` before `runDaemon` returns) and asserts `mark === laterKey` with 2 notifications raised — so the reported first-attempt regression (truncated ticks, lost notifications) is genuinely gone, not just moved. The guard spec added for the *shape* is vacuous, though — finding **R2-4**. |
+| **#3** MAJOR (`eventType` message) | **Fixed** | Probed against `dist/index.js`: `parseKey("…warning…")` now yields `└─ ["eventType"] └─ EventType ├─ Expected "alert", actual "warning"`. The `as EventType` cast is a real cast, but `EventTypeSchema` inside `EventKeyComponents` is the gate and the spec asserts the message contains `eventType`. The plan's execution note was corrected rather than quietly rewritten. |
+| **#4** MAJOR (bucket pre-flight) | **Fixed, with a caveat** | `probeBucket` mirrors `probeCredentials` exactly and gates `start()` before any state is loaded or any handler installed, so it cannot wedge a running daemon. `HeadBucket` inherits the SDK's bounded retry/timeout policy, so it fails rather than hangs. `describeBucketFailure` correctly translates 404/403/301 and falls back to `describeCause` — five specs pin it. **Caveat:** the caller does not use the distinction it computes — finding **R2-3**. |
+| **#5** MAJOR (`Schema.URL`) | **Fixed, genuinely byte-stable** | `WorkItemUrl` is `Schema.String` + `Schema.filter(URL.canParse)`, so encode is identity. `parse.spec.ts` round-trips three inputs a normalizing codec would move (`https://github.com`, `HTTPS://GitHub.com/Foo`, `https://x.test/a?b=1&b=2`) and a companion spec asserts `new URL(...)` *would* have rewritten them. Nothing downstream assumes a `URL` instance: `grep` finds no `.href` outside the spec that documents the hazard; `notification-content.ts` interpolates the string directly; `parse.spec.ts:25` asserts `event.workItem` `toBe` a string. README and the ADR-adjacent docs both say "stored verbatim". |
+| **#6** MAJOR (log assertions) | **Fixed, well** | `testing/capture-logger.ts` uses a real winston `Stream` transport with `format.json()`, so assertions run against the same serialization the file transport emits, `defaultMeta` included — a stronger choice than R1's proposed hand-rolled `Transport` subclass. Five specs cover the skip warning (level, `key`, `reason` naming `priority`), a delivery line per event with its triage fields, `service`/`env` on every record, the undelivered-notification error line, and silence on an idle tick. |
+| **#7** MAJOR (exemplar duplication) | **Fixed; export resolves** | The three byte-identical copies are gone; only `not-json.txt` remains local. `exports["./testing"]` → `dist/testing/exemplars.{d.ts,js}`, both emitted by the new second tsup entry (verified in the build log); `files: ["dist","exemplars"]` and `exports["./exemplars/*"]` are correct. `import.meta.dirname + "../../exemplars"` resolves identically from `src/testing/` and `dist/testing/`. The consumer's suite compiles, typechecks and passes against it. **But** the turbo cache no longer tracks the dependency — finding **R2-2**. |
+| **#8** MINOR (Terraform dup) | **Fixed; equivalent for both roots** | Diffed the pre-refactor `state-bucket.tf` and `s3.tf` against the module + call sites. `personal-events`: identical resources, identical arguments, all three rule ids preserved (`tier-current-versions` 90d→STANDARD_IA / 365d→GLACIER_IR, `trim-superseded-versions` keep-5 / `var.noncurrent_version_retention_days`, `abort-incomplete-uploads` 7d). `bootstrap`: `transitions` defaults to `[]` and the `dynamic "rule"` emits nothing, so the tiering rule correctly does **not** appear; retention 90d / keep-20 preserved. Tags still flow from each root's `default_tags`. Only the bootstrap rule *id* changed — nit **R2-11**. |
+| **#9** MINOR (`describeCause`) | **Fixed** | Exactly one definition remains repo-wide (`packages/event-model/src/describe-cause.ts`), exported from the package root and imported by all four app sites. |
+| #10, #13, #14, #16, #17, #18, #19, #20 | **Fixed** | `p05` now rejected (probed); `env`/`logLevel` are `Schema.Literal` with specs rejecting `production`/`verbse`; `Delivery` narrows `deliverAll`/`deliverOne`; `validate` scripts `init -backend=false` first and cover both roots (run and confirmed); the two `-chdir` commands corrected; `feature.md`'s two overclaims corrected and the previous wording named rather than silently replaced; carve-outs recorded in `CLAUDE.md`; the dotted-bucket trade-off recorded in the ADR with a revision-log entry. |
+| #11, #12, #15 | **Deliberately deferred, honestly** | All three are in `feature.md` § "Follow-up candidates" with accurate descriptions. #12 is correctly flagged as needing a product decision. I re-confirmed #11's premises at runtime: `2026-13-45T99:99:99.000Z` still parses `Right`, and `name` still accepts `a/b`, `a\nb`, `a b`, and astral-plane characters. |
+
+**Nothing was found to be superficially patched but still broken.**
+
+### Findings
+
+#### R2-1. MAJOR — the high-water mark is over *producer-supplied* timestamps, so a later-written key that sorts lower is still lost forever; the module comment claims the opposite
+
+`apps/desktop-notifier/src/poller.ts:3-8,20-28`
+
+```
+ * Gather: one poll of the bucket. Keys carry a leading ISO instant, so they sort chronologically
+ * and `ListObjectsV2` `StartAfter` (exclusive) gives exactly the objects written since the last
+ * one processed. Ordering is by key string, never `LastModified` — clock skew between producers
+ * would reorder events under a timestamp comparison.
+```
+
+Both sentences are wrong in a way that matters, and the second is exactly backwards.
+
+`StartAfter` does not give "the objects written since the last one processed" — it gives the objects
+whose **key** sorts above the mark. The key's leading instant is the *producer's* clock, not S3's
+write time, so any object written after the mark advanced but bearing a lower-sorting key is never
+returned. Two concrete triggers:
+
+1. **Same-instant tie-break.** Fixing the fraction at three digits made the ordering total, but it did
+   not make it *write-order*. Within one millisecond the order is `eventType` → `priority` →
+   `source` → `name`, and `alert` < `notification`, `p1` < `p8`. Verified against the built package:
+
+   ```
+   A = 2026-01-01T00:00:00.000Z.alert.p5.github.x.json
+   B = 2026-01-01T00:00:00.000Z.notification.p8.github.x.json
+   A < B  → true
+   ```
+
+   A producer that stamps a batch with one `toISOString()` and `PutObject`s them sequentially — the
+   ordinary shape for the `claude-code-integration` and `github-integration` producers the plans
+   anticipate — writes `B` then `A`. A poll landing between the two `PutObject`s sets the mark to `B`;
+   `A` is then permanently invisible and `state.json` persists the skip across restarts. This is the
+   *same failure mode and the same permanence* as R1 #1, reached by a different route.
+2. **Producer clock skew.** With several producers on different machines (the plans have at least
+   three), a producer whose clock is a second slow writes a key that sorts below a mark already set by
+   a faster machine, and is skipped. The comment's rationale is inverted: `LastModified` is S3's
+   *single server* clock and is the option that is *immune* to producer skew; ordering by key is
+   precisely a producer-timestamp comparison and is the option that carries it.
+
+`advanceMark`'s own spec (`poller.spec.ts:34-39`, "distinguishes two events written in the same
+millisecond by their full key") shows the tie-break was thought about, but it asserts only that the
+two keys are distinguishable, not that the losing one is ever delivered.
+
+This is not in `feature.md` § "Follow-up candidates" (which covers #11, #12, #15, #20) and not in the
+ADR's "One-way door" paragraph, which discusses renaming keys but not this.
+
+**Proposed fix (minimum, this branch):** correct the comment — say that `StartAfter` returns objects
+whose *key* sorts above the mark, that the key's instant is the producer's clock, and that an object
+written with a key below the current mark is not re-listed. Add a row to "Follow-up candidates" naming
+the two triggers. **Proposed fix (real, follow-up story):** poll with a lookback —
+`StartAfter = max(mark − lookbackWindow, seed)` — and keep the set of keys already delivered inside the
+window in `state.json`, so a late or skewed write inside the window is still delivered exactly once.
+The window is the maximum producer skew you are willing to tolerate. This is the same product decision
+as #12 and should probably be asked in the same breath.
+
+#### R2-2. MINOR — the #7 dedup is not tracked by the turbo cache, so editing a canonical exemplar leaves the consumer's suite reporting a stale PASS
+
+`turbo.json:8`
+
+```json
+"build": { "dependsOn": ["^build"], "inputs": ["src/**", "tsup.config.ts", "tsconfig.json", "package.json"], "outputs": ["dist/**"] }
+```
+
+An explicit `inputs` array **replaces** turbo's default (all git-tracked files in the package), so
+`packages/event-model/exemplars/**` is not in the `build` hash. Confirmed empirically with
+`turbo run test --dry=json`: `@personal-events/event-model#build`'s inputs are exactly
+
+```
+package.json, src/*.ts, src/testing/exemplars.ts, tsconfig.json, tsup.config.ts
+```
+
+— no `exemplars/`. `@personal-events/desktop-notifier#test` hashes its own `src/**` and `exemplars/**`
+plus the dependency's `build` hash, so **changing `packages/event-model/exemplars/valid-github-pull-request.json`
+invalidates neither**, and `pnpm test` replays a cached PASS for the app without running it.
+
+That is precisely the silent-drift failure R1 #7 existed to prevent, reintroduced one layer down: the
+app's suite now genuinely depends on a file it does not declare and its dependency does not export.
+(`event-model`'s own `test` task does list `exemplars/**`, so only the consumer is affected — and only
+on cached runs; the `--force` verification above is unaffected.)
+
+**Proposed fix:** add `"exemplars/**"` to `build.inputs` (the exemplars are a published artefact of the
+package — `files` and `exports` already say so), or use `["$TURBO_DEFAULT$"]`. Adding `"exemplars/**"`
+to `build.outputs` as well would make the dependency explicit both ways.
+
+#### R2-3. MINOR — `probeBucket`'s failure path treats a transport error identically to a typo'd bucket, so a laptop daemon started before the network is up exits instead of retrying
+
+`apps/desktop-notifier/src/index.ts:39-47`; `apps/desktop-notifier/src/s3-client.ts:46-66`
+
+`describeBucketFailure` carefully distinguishes 404 ("no such bucket"), 403 ("access denied"), 301
+("wrong region") and *everything else* (network, DNS, TLS, `getaddrinfo ENOTFOUND` — which has its own
+spec at `s3-client.spec.ts:42`). `start()` then discards the distinction and returns exit code 1 for all
+of them.
+
+The pre-flight is required by `.agents/guidance/aws.md` and the fix is right in substance, but the
+guidance's stated purpose is *"to ensure the bucket exists"* — a DNS failure is not evidence that it
+does not. This daemon's documented home is a laptop (`config.ts:15-23` reasons from exactly that), and
+a login-time start racing wifi association is the ordinary case, not the exotic one. Today that is a
+process that exits 1 and stays dead until the user notices; before this change it started and backed
+off, which for *this* failure was the better behaviour.
+
+**Proposed fix:** widen `BucketProbeResult` to a third `_tag` (`BucketProbeInconclusive`) returned when
+`httpStatusOf(cause)` is `undefined` or ≥ 500, and let `start()` log it at `warn` and continue into the
+normal back-off loop; keep the hard exit for 404/403/301, which are the misconfigurations the guidance
+is actually about. One extra tag and one extra branch, and it keeps the typo'd-`EVENT_BUCKET` behaviour
+the fix was for.
+
+#### R2-4. MINOR (test-coverage) — the spec that claims to guard R1 #2's scheduling shape passes just as happily under the buggy implementation
+
+`apps/desktop-notifier/src/daemon.spec.ts:215-245`
+
+```ts
+/**
+ * Guards the scheduling shape rather than the output: a daemon that chains each tick's promise to
+ * the next retains one pending promise and one async frame per tick for the life of the process.
+ * …
+ */
+it("settles each tick independently instead of chaining them into one unbounded promise", …)
+```
+
+The only assertion is `polls > 3` after 50 ms at a 1 ms interval. The pre-fix implementation
+(`await runTick` → `await delay` → `return runDaemon(...)`) also performs well over three polls in
+50 ms — it leaked frames, it did not run slowly. So the spec does not discriminate between the two
+implementations and would not have caught the defect it is documented as guarding. The inline comment
+("Many ticks completed while the outer promise was still pending, so no tick was waiting on a later
+one to settle") does not follow from what is measured: under the old code the outer promise was also
+pending while many ticks completed.
+
+`.agents/languages/typescript/typescript-testing.md`: *"Tests must validate actual business logic,
+avoid writing tests that only effectively test the mocking framework."* The same spirit applies — a
+regression guard that cannot fail on the regression is worse than none, because it stops anyone
+looking again.
+
+**Proposed fix:** either make it discriminating — the honest observable is stack depth, e.g. run with a
+tiny interval and assert that a `runTick` invocation's `new Error().stack` does not grow with the tick
+count — or drop the docblock's claim, rename it to what it does test ("keeps polling on a schedule"),
+and record in `CLAUDE.md` § "Rules biome cannot enforce" that the non-chaining shape is a review
+responsibility. What should not stand is a spec whose name and comment assert a guarantee it does not
+provide.
+
+#### R2-5. MINOR — the new module boundary has no variable validation, and the two roots disagree about whether `env` is validated at all
+
+`infra/modules/hardened-bucket/variables.tf`; `infra/bootstrap/variables.tf:7-11` vs `infra/personal-events/variables.tf:7-16`
+
+The fix round created a module boundary, which is the point at which inputs become a contract. None of
+the five inputs carries a `validation` block: `noncurrent_version_retention_days = 0`,
+`newer_noncurrent_versions_kept = -1`, or `storage_class = "GLACIAR"` all pass `terraform validate` and
+fail only at `apply`, against real AWS, after the bucket has been created. `bucket_name` is likewise
+unconstrained even though S3 bucket names have a well-known grammar.
+
+Separately, `personal-events` validates `env ∈ ["prod","dev","staging","qa","local"]` while `bootstrap`
+— which uses `env` to name the state bucket in exactly the same scheme — validates nothing, so
+`-var env=Prod` silently produces `tfstate.Prod.…` and fails at apply on the uppercase letter.
+
+**Proposed fix:** add `validation` blocks to the module (`days > 0`, `storage_class` in the S3 set,
+retention/kept `>= 0`) and lift `personal-events`' `env` validation into `bootstrap` verbatim — or into
+a shared `locals`/variable definition if you prefer one place.
+
+#### R2-6. MINOR — the environment vocabulary forks between the Terraform half and the TypeScript half, and the documented carve-out only half-covers it
+
+`infra/personal-events/variables.tf:13` vs `apps/desktop-notifier/src/config.ts:24`; `CLAUDE.md:60-63`
+
+- Terraform accepts `["prod","dev","staging","qa","local"]` — `.agents/guidance/aws.md`'s spelling.
+- The daemon accepts `["local","dev","qa","stage","prod"]` — `.agents/guidance/logging.md`'s spelling,
+  plus `local`.
+
+So `staging` is a legal Terraform `env` (it names buckets `events.staging.…`) and an **illegal** daemon
+`ENV`, and `stage` is the reverse. The `CLAUDE.md` carve-out justifies adding `local` by citing
+`aws.md`'s environment list — but the same list contains `staging`, which was not added, so the
+carve-out's own reasoning is applied to one value and not the other.
+
+The deviation itself is **justified and properly recorded** (see the assessment below); it is the
+*scope* that is inconsistent.
+
+**Proposed fix:** pick one spelling for the project and state it once — either add `staging` to
+`deploymentEnvs` and say the project uses `aws.md`'s list, or change the Terraform validation to
+`stage` and say the project uses `logging.md`'s list plus `local`. Then reference that single sentence
+from both the `CLAUDE.md` carve-out and `variables.tf`.
+
+#### R2-7. MINOR — an unusable state file is logged at `info`, the same level as a clean resume
+
+`apps/desktop-notifier/src/index.ts:74-78,84-88`
+
+```ts
+logger.info(stateOutcomeMessages[loaded._tag], { stateFile: config.stateFile, …reason })
+```
+
+`LoadedState`, `NoState` and `LoadStateFailure` all log at `info`. But `LoadStateFailure` means the
+stored high-water mark was discarded and the daemon is restarting from "now" — every event written to
+the bucket between the last successful save and this start is silently never notified.
+`.agents/guidance/logging.md`: *"`warn` is used when the state being logged may be a problem."* This is
+that. The `reason` and `stateFile` are correctly included, so only the level is wrong — but the level
+is what an operator filters on.
+
+**Proposed fix:** split the level out of the same `Record` lookup the message uses, e.g.
+`const stateOutcomeLevels: Record<LoadStateResult["_tag"], "info" | "warn"> = { LoadedState: "info",
+NoState: "info", LoadStateFailure: "warn" }` and `logger.log(stateOutcomeLevels[loaded._tag], …)` —
+which keeps the full-`Record` exhaustiveness the file already uses.
+
+#### R2-8. MINOR (guidance) — there is no `NOW.md`, which `.agents/general.md`'s trigger table mandates and `.agents/tests.md` depends on
+
+`.agents/general.md` § Context Specific Guidance:
+
+> | Development logging | `.agents/guidance/now.md` | At the start of every work session and when completing significant actions |
+
+`.agents/guidance/now.md`:
+
+> *"A log of all AI actions must be kept in the file NOW.md located in the project root. If the file
+> does not exist, create one. This file is strictly append-only."*
+
+`find . -iname "NOW.md"` returns nothing. Four stories and a fix round were executed with no session
+log. R1 did not check this either — I re-walked the trigger table independently, and this is the one
+row neither pass covered. (Every other triggered row *is* honoured: TypeScript, Node, Effect — with the
+missing `.agents/cache/effect/**` honestly disclosed and `/update-effect-docs` recommended — AWS,
+Logging, ADR with all three files and a revision-log entry, and Planning artifacts.)
+
+It is not purely bookkeeping: `.agents/tests.md` § Test Removal Protocol makes `NOW.md` the mechanism —
+*"No test may be deleted or skipped unless: a rationale is included in NOW.md with `@test-removed`"* —
+and this round did remove a spec (`"recovers a millisecond-less timestamp"`). The removal is well
+justified and is documented in `event-model-package.md`, so the substance is fine; the required
+artefact is simply absent.
+
+**Proposed fix:** create `NOW.md` at the repo root with a back-dated entry for this feature's execution
+and one for the R1 fix round including a `@test-removed` line for the millisecond-less spec, and keep
+appending. If the project genuinely intends not to keep one, that belongs in `CLAUDE.md` §
+"Documented carve-outs" alongside the other two.
+
+#### R2-9. NIT — the fix round introduced a fall-through `if` that the carve-out it also introduced does not cover
+
+`apps/desktop-notifier/src/daemon.ts:67-71`
+
+```ts
+const onAbort = (): void => {
+  if (!ticking) {
+    stop()
+  }
+}
+```
+
+`CLAUDE.md` § "Documented carve-outs" (added in commit `627566d`, i.e. this same round) scopes the
+exemption precisely: *"This exemption covers guards that return or throw immediately, nothing more."*
+`onAbort` neither returns nor throws — it is a conditional side effect with no `else`, so it falls
+under the unmodified rule in `.agents/languages/typescript/typescript.md` (*"Avoid fall-through if
+statements, always use if AND else"*). Every other `if` in the diff genuinely is a returning guard.
+
+Recording it because R1 #19's stated worry was *"the rule quietly eroding across future files"*, and the
+first new file after the carve-out was written is where it eroded.
+
+**Proposed fix:** `if (!ticking) { stop() } else { /* the tick's continuation stops after it finishes */ }`,
+or hoist the condition into a named predicate and keep the two-branch form. Either is a one-line change.
+
+#### R2-10. NIT — `desktop-notifier-daemon.md`'s spec count is wrong
+
+`.agents/plans/bootstrap-and-iac/desktop-notifier-daemon.md` § "R1 review fixes": *"Spec count rose
+60 → 87."* Measured: the desktop-notifier package runs **86 passed, 5 skipped (91 total)**; `87` is the
+event-model figure, correctly stated in `event-model-package.md`. The starting `60` is right.
+
+Trivial in itself, but these plan files are the merge's audit trail and R1 already had to correct four
+claims in them — worth one more pass with the numbers in front of you.
+
+**Proposed fix:** *"Spec count rose 60 → 86 passing (91 including the five opt-in specs)."*
+
+#### R2-11. NIT — the bootstrap lifecycle rule was silently renamed, and the equivalence note only covers the other root
+
+`infra/bootstrap/state-bucket.tf` (was `trim-superseded-state-versions`, now `trim-superseded-versions`
+from the shared module); `infra-s3-and-dns.md` § R1 fixes.
+
+The re-plan note asserts *"all three lifecycle rules intact (`tier-current-versions` … ,
+`trim-superseded-versions` … , `abort-incomplete-uploads` …)"* — but those are the `personal-events`
+rules. The bootstrap root's rule id changed. With no state anywhere this is free (the rule id is a
+child of `aws_s3_bucket_lifecycle_configuration`, so it is a rewrite of the same resource, not a
+destroy), and the retention values are preserved exactly — but the note's own "if this branch is ever
+rebased onto an applied state" caveat lists `state mv` and not this.
+
+**Proposed fix:** one clause in the same bullet: *"the bootstrap rule id also changed from
+`trim-superseded-state-versions` to the module's `trim-superseded-versions`; same values, and on an
+applied state it is an in-place update of the lifecycle configuration."*
+
+#### R2-12. NIT — root `pnpm lint` requires `terraform` on `PATH`
+
+`infra/package.json:8`; `CLAUDE.md:20`
+
+`CLAUDE.md` advertises `pnpm lint` as a root command, and `turbo run lint` includes the `infra` member,
+whose `lint` is `terraform fmt -check -recursive .`. A contributor (or CI job) without the Terraform
+CLI cannot run the repo's lint at all — the failure is a missing binary, not a lint error.
+
+**Proposed fix:** either note the prerequisite in `CLAUDE.md`/`README.md` next to the root commands, or
+make the infra lint script degrade (`command -v terraform >/dev/null || { echo "terraform not
+installed; skipping fmt check"; exit 0; }`). The first is probably right for a project whose whole
+substrate is Terraform — just say so.
+
+### DRY vs WET assessment (current state, including duplication the fix round introduced)
+
+**The fix round measurably reduced real duplication, and did not trade it for hidden coupling in the
+code.** All three of R1's duplication findings are genuinely resolved:
+
+| R1 # | Before | After |
+| :--- | :--- | :--- |
+| #7 | 3 byte-identical exemplar JSONs + 2 near-identical loaders across two members | 0 duplicated exemplars; one `exemplarReader(dir)` + `readExemplar*` in the package, and a 3-line re-export in the app. The app keeps only `not-json.txt`, which is correctly its own concern. |
+| #8 | 6 hardened-bucket resources restated in two roots | One `infra/modules/hardened-bucket/`; both roots call it; only retention/tiering differ and both are inputs. Verified equivalent for both roots. |
+| #9 | `describeCause` × 5 | Exactly one definition repo-wide. |
+
+**Duplication the fix round itself introduced — two instances, both worth naming:**
+
+1. **The `.`/`Z` ordering rationale is now stated at length in six places** — `event.ts:23-35`,
+   `event-key.ts:20-29`, `packages/event-model/README.md:36-41`, `event.spec.ts:41-46`,
+   `event-model-package.md`, and `feature.md`'s R1 section (plus the commit message). Each copy carries
+   the same worked example (`…02Z…` > `…02.500Z…`). This is documentation, not logic, and the
+   redundancy is defensible for a contract this load-bearing — but it is now the *most* duplicated
+   thing in the diff, and finding **R2-1** shows exactly the cost: the explanation is subtly incomplete
+   in all six places at once, and correcting it is a six-file edit. **Recommendation:** keep the
+   `event.ts` docblock as the single normative statement and have the other five point at it
+   (*"see `event.ts` → `isoInstantPattern`"*) rather than restating the argument.
+2. **`daemon.spec.ts` hand-rolls `DaemonDependencies` twice** despite `dependenciesFor` existing —
+   lines 102-108 (pre-existing) and 227-233 (**added by this round's new spec**). Six lines, twice, one
+   of which the helper could produce with an extra optional parameter. Small, but it is the kind of
+   accretion that makes a fixture helper stop being used at all. **Recommendation:** give
+   `dependenciesFor` an options object and route both through it.
+3. **`versions.tf` is now duplicated three ways, not two.** R1 flagged `bootstrap/versions.tf` ≡
+   `personal-events/versions.tf`; the new `modules/hardened-bucket/versions.tf` is a byte-identical
+   third copy. This is **correct and unavoidable** — a Terraform module must declare its own
+   `required_providers` — so it is acceptable WET, but it is worth stating plainly that the module
+   extraction did not reduce that particular duplication, it increased it.
+
+**Near-misses re-examined and confirmed acceptable WET** (I agree with R1 and re-checked each):
+per-member `tsconfig.json`/`vitest.config.ts`/`tsup.config.ts` (each three-to-seven lines, must exist
+per member, and they now differ *more* than before — event-model has two entries and `dts: true`, the
+app has one and a shebang banner); the tagged-union result shapes (`NotifyResult`, `LoadStateResult`,
+`CredentialProbeResult`, `BucketProbeResult`, `ClassifiedObject`) — a repeated *shape* with different
+members and different axes of change, and `BucketProbeResult` deliberately mirroring
+`CredentialProbeResult` is the fix's best feature, not its worst; the two roots' `providers.tf` and
+`locals.tf` (five lines each, genuinely different tag sets, and a root module is the right owner of its
+own provider); `parsedObjects`/`rejectedObjects`.
+
+**One genuine remaining duplication, unchanged since R1 and not flagged by it:** the root
+`vitest.config.ts` declares `test.projects: ["packages/*", "apps/*"]` **and** every member declares its
+own `vitest.config.ts` with a `test` script that turbo runs directly. So there are two independent ways
+to run the suite with different settings — the root path applies `disableConsoleIntercept` and coverage,
+the turbo path does not. `pnpm test` uses the turbo path, so the root config's coverage settings never
+take effect. Not a defect today; worth deciding which one is canonical before someone adds a coverage
+gate to the one that is not running.
+
+### Honesty audit
+
+**Fence compliance: clean.** The diff creates no AWS resources and records none. No `*.tfstate`, no
+`backend.hcl`, no `.terraform/` (all gitignored, and the `.gitignore` comment correctly explains that
+`.terraform.lock.hcl` *is* committed). Every `terraform apply` string in the diff is documentation, a
+runbook step, or the `deploy` npm script. No credentials, keys, `AKIA`/`ASIA` prefixes, `.env`,
+`.claude/`, or `AGENTS.md`. `.gitignore` correctly ignores the AI-config symlink trees while leaving
+`.agents/plans/` tracked, per the user's staging rules. The statement that **no NS records were written
+into the live `fifthdimensionengineering.com` zone** is consistent with everything in the diff.
+
+**Plan-file accuracy: the R1 corrections are themselves correct, and I found one residual overclaim
+(nit R2-10) and one omission (R2-1).**
+
+| Claim | Verdict |
+| :--- | :--- |
+| `feature.md`: "173 specs green, verified uncached with `--force`" | **Accurate** — I measured exactly 173 passed / 5 skipped with `--force` on all four tasks. |
+| `feature.md`: "the round trip is now pinned as *injective*" | **Accurate** — `event-key.spec.ts:91-98` asserts re-encode identity over three keys, and `p05` is a `Left`. |
+| `feature.md`: "a malformed object is logged and skipped — **Met**, … the log line itself is now asserted" | **Accurate**, and the previous overclaim is named rather than quietly replaced. Good practice. |
+| `feature.md`: "credentials and bucket failures exercised against the built daemon; the unparseable-object path … in the unit suite" | **Accurate** and correctly narrower than the R1-flagged wording. |
+| `feature.md` / `infra-s3-and-dns.md`: "`Plan: 8 to add, 0 to change, 0 to destroy` … re-confirmed after the shared-module refactor" | **Consistent** — I count exactly 8 planned resources (6 bucket + child zone + parent NS record) both before and after; the module refactor changes addresses, not counts. Not independently re-run (it needs the account). |
+| `infra-s3-and-dns.md` § Deferred verification, all 8 rows | **Accurate**; the `-chdir` corrections are right and the commands are now copy-pasteable. I ran the two offline ones (`fmt -check`, `validate` for both roots) and both behave as described. |
+| `desktop-notifier-daemon.md` § Deferred verification, all 3 rows | **Accurate**; the "What WAS verified locally" section correctly separates what ran against the built daemon from what ran in the unit suite. |
+| `desktop-notifier-daemon.md`: "Spec count rose 60 → 87" | **Wrong** — 86 passing / 91 total. Nit **R2-10**. |
+| `event-model-package.md`: "Spec count rose 59 → 87" | **Accurate.** |
+| ADR revision log + state-changes | **Accurate and complete** — both the module extraction and the dotted-bucket trade-off are logged with reasons, and the body carries the trade-off section. Matches `.agents/guidance/adr.md`'s three-file structure. |
+| Anything in the diff overclaiming a live AWS verification | **None found.** |
+
+**Not recorded anywhere, and should be:** the same-instant / clock-skew loss path (finding **R2-1**).
+The audit trail is otherwise unusually honest, which is exactly why this gap stands out — a reader of
+`poller.ts` today would come away believing the opposite of the truth.
+
+**Assessment of the two documented deviations:**
+
+1. **`rewriteRelativeImportExtensions` instead of `allowImportingTsExtensions` — justified, and
+   properly recorded.** The guidance's actual requirement is the *source convention* (`from
+   "./foo.ts"`), and it names `allowImportingTsExtensions` as the mechanism. That flag requires
+   `noEmit`/`emitDeclarationOnly`, which is fine for the per-package `tsc --noEmit` typecheck but would
+   be a problem the moment `tsc` is asked to emit; `rewriteRelativeImportExtensions` achieves the same
+   source convention and rewrites to `.js` on emit, so it is strictly more capable. I verified the
+   convention actually holds (every relative import in both members carries `.ts`) and that
+   `pnpm typecheck` is green under `moduleResolution: NodeNext`. The `CLAUDE.md` entry states the
+   substitution, the reason, and that it is deliberate. **Correct call, correctly recorded.**
+2. **Accepting `local` as a fifth `env` — justified in substance, incompletely scoped.** The guidance
+   conflict is real: `logging.md` fixes the set at four, `aws.md` names five environments for this kind
+   of project including `local`, and a laptop-resident daemon that refuses its own default environment
+   is unusable. Crucially it is an *explicit literal*, not a silent fallback — `config.spec.ts:40-47`
+   proves `production` is still rejected — which addresses the specific harm `logging.md`'s closed set
+   exists to prevent (a wrongly-stamped shipped record). It is recorded in `CLAUDE.md` and in the
+   story's R1-fixes section. **The deviation is justified**; the scope is not internally consistent,
+   because the same `aws.md` list also contains `staging` and the Terraform side already accepts it —
+   finding **R2-6**.
+
+### What was checked and found clean
+
+- **No accumulator loops.** Re-walked every iteration site against `looping.ts` in full. `advanceMark`
+  is `reduce`; `listKeysAfter` is `flatMap`/`flatMap`/`toSorted`; `deliverAll` threads the promise
+  chain through `reduce` exactly as `sequentialPromises_good` prescribes; `omitUndefined` is
+  `Object.fromEntries(Object.entries(…).filter(…))` exactly as `loopWithPredicate_good` prescribes;
+  `parseRecords` (new this round) is `split`/`filter`/`map`. The three `let`s introduced in `runDaemon`
+  (`state`, `ticking`, `timer`) are **not** a violation — the rule bans a loop filling a previously
+  declared accumulator, and this is an event-driven state machine with no loop at all; the same is true
+  of `fallbackNotifier`'s `primaryUsable` latch and `capture-logger`'s captured array.
+- **`Record` lookups over `if`/`else if` chains** — `bucketFailuresByStatus` (new this round) is a
+  correctly-`Partial` `Record` over an open key set with a `??` fallback, which is exactly the case
+  `typescript.md` permits; `stateOutcomeMessages` remains a full `Record` over the union.
+- **Result types** — `BucketProbeResult` follows the established tagged-union shape; no new bare
+  `null`/`undefined` return anywhere.
+- **No enums, no `function` keyword, no trailing semicolons, arrows throughout**, explicit return types
+  on every function including the new ones. Largest source file is `notify.ts` at 125 lines.
+- **Gather/Compute/Persist** is unchanged and still visible at module level; `probeBucket` is correctly
+  placed in `s3-client.ts` (the Gather-setup module) rather than accreting into `index.ts`, which is
+  the `.agents/general.md` § "Beware fix-in-place drift" instinct applied correctly.
+- **Slice-don't-dump** — `Delivery` is a real narrowing, and `deliverAll`/`deliverOne` now cannot reach
+  `s3`/`bucket`/`stateFile` even by a later edit.
+- **Logging** still conforms: per-destination serialization, `env`/`service`/`timestamp` in
+  `defaultMeta`, splat appended to the console line only, and every failure log names the offending
+  value. The new `capture-logger` asserts the `defaultMeta` requirement directly.
+- **Terraform** — `fmt -check -recursive` and `validate` both clean for all three modules from a state
+  where `.terraform/` exists; the `validate` scripts genuinely `init -backend=false` first (I ran them).
+  Provider inheritance into the child module is correct (no `providers` block needed, `default_tags`
+  flows from each root).
+- **Signal handling** — `process.once` per signal is right: after the first `SIGINT` fires the listener
+  is removed and Node restores default termination, so a second Ctrl-C force-quits rather than hanging.
+  `stop()` clears the pending timer, so the event loop drains and the process exits with the code
+  `main()` set.
+- **State file** — temp-then-rename within the same directory is correct, and the spec asserts no temp
+  file survives. Two daemons sharing one `STATE_FILE` would race last-writer-wins (re-notification, not
+  loss) and a crash between `writeFile` and `rename` leaves an orphan `.<ts>.<pid>.tmp`; both are
+  acceptable for a single-user desktop daemon and neither is worth a finding.
+- **S3 pagination error handling** — a mid-pagination failure rejects the whole `pollOnce`, `runTick`
+  catches it, and the mark is held, so a partial listing can never advance the mark. Correct. (The
+  unbounded fan-out is R1 #15, deferred and recorded.)
+
+### Suggested merge gate
+
+**Nothing blocks the merge.** Fix **R2-1**'s comment and add its follow-up row before merging — that is
+a five-minute documentation change and it is the difference between a known trade-off and a booby trap
+for whoever reads `poller.ts` next; the lookback-window implementation itself belongs in the same
+product conversation as #12. **R2-2** is worth folding in now because it is a one-line `turbo.json`
+edit that protects the fix immediately above it. **R2-3 to R2-8** are good next-round work; **R2-9 to
+R2-12** are housekeeping.
