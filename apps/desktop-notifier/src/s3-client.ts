@@ -29,12 +29,24 @@ export interface BucketReachable {
   readonly _tag: "BucketReachable"
 }
 
+/** The bucket is definitively wrong: it does not exist here, or these credentials may not read it. */
 export interface BucketUnreachable {
   readonly _tag: "BucketUnreachable"
   readonly message: string
 }
 
-export type BucketProbeResult = BucketReachable | BucketUnreachable
+/**
+ * The probe could not reach S3 to find out — DNS, TLS, a dropped link, a 5xx. This is **not**
+ * evidence the bucket is missing, and it is the ordinary case for a laptop daemon started at login
+ * while wifi is still associating. Exiting on it would leave a dead process until someone noticed;
+ * the poll loop's existing back-off is the right response.
+ */
+export interface BucketProbeInconclusive {
+  readonly _tag: "BucketProbeInconclusive"
+  readonly message: string
+}
+
+export type BucketProbeResult = BucketReachable | BucketUnreachable | BucketProbeInconclusive
 
 export const probeCredentials = async (s3: S3Client): Promise<CredentialProbeResult> => {
   const resolve = s3.config.credentials
@@ -47,7 +59,19 @@ export const probeBucket = async (s3: S3Client, bucket: string): Promise<BucketP
   s3
     .send(new HeadBucketCommand({ Bucket: bucket }))
     .then((): BucketProbeResult => ({ _tag: "BucketReachable" }))
-    .catch((cause: unknown): BucketProbeResult => ({ _tag: "BucketUnreachable", message: describeBucketFailure(cause) }))
+    .catch((cause: unknown): BucketProbeResult => toProbeFailure(cause))
+
+/**
+ * `.agents/guidance/aws.md` asks the pre-flight to establish *that the bucket exists*. A 404/403/301
+ * answers that question; a transport error does not, so it is reported as inconclusive rather than
+ * as a missing bucket. 5xx is S3 failing, not the configuration being wrong, so it lands there too.
+ */
+const toProbeFailure = (cause: unknown): BucketProbeResult => {
+  const status = httpStatusOf(cause)
+  return status !== undefined && status < 500 && bucketFailuresByStatus[status] !== undefined
+    ? { _tag: "BucketUnreachable", message: describeBucketFailure(cause) }
+    : { _tag: "BucketProbeInconclusive", message: describeBucketFailure(cause) }
+}
 
 /**
  * `HeadBucket` answers with a bodyless 404/403, so the SDK surfaces a bare `UnknownError` — useless

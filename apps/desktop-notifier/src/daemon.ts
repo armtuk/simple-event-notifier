@@ -65,7 +65,9 @@ export const runDaemon = async (
      * aborted signal and stops there instead.
      */
     const onAbort = (): void => {
-      if (!ticking) {
+      if (ticking) {
+        // The tick's own continuation calls stop() once it has finished delivering and persisting.
+      } else {
         stop()
       }
     }

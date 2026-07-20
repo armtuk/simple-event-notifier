@@ -35,15 +35,24 @@ const start = async (config: DaemonConfig): Promise<number> => {
   }
 
   // Pre-flight the bucket per .agents/guidance/aws.md: a typo'd EVENT_BUCKET must fail at startup,
-  // not become a process that backs off forever while looking healthy.
+  // not become a process that backs off forever while looking healthy. A transport failure is a
+  // different thing — it is no evidence about the bucket, and a laptop daemon started at login
+  // routinely races wifi association — so it warns and continues into the normal back-off loop.
   const bucket = await probeBucket(s3, config.bucket)
   if (bucket._tag === "BucketUnreachable") {
-    logger.error("The event bucket does not exist or is not reachable; refusing to start", {
+    logger.error("The event bucket does not exist or is not readable; refusing to start", {
       bucket: config.bucket,
       region: config.region,
       reason: bucket.message
     })
     return 1
+  }
+  if (bucket._tag === "BucketProbeInconclusive") {
+    logger.warn("Could not confirm the event bucket; starting anyway and letting the poll loop retry", {
+      bucket: config.bucket,
+      region: config.region,
+      reason: bucket.message
+    })
   }
 
   const initial = await resolveInitialState(logger, config)
@@ -71,7 +80,7 @@ const start = async (config: DaemonConfig): Promise<number> => {
  */
 const resolveInitialState = async (logger: Logger, config: DaemonConfig): Promise<TickState> => {
   const loaded = await loadState(config.stateFile)
-  logger.info(stateOutcomeMessages[loaded._tag], {
+  logger.log(stateOutcomeLevels[loaded._tag], stateOutcomeMessages[loaded._tag], {
     stateFile: config.stateFile,
     ...(loaded._tag === "LoadStateFailure" ? { reason: loaded.message } : {})
   })
@@ -85,6 +94,18 @@ const stateOutcomeMessages: Record<LoadStateResult["_tag"], string> = {
   LoadedState: "Resuming from the stored high-water mark",
   NoState: "No stored high-water mark; starting from now rather than replaying history",
   LoadStateFailure: "Ignoring an unusable stored high-water mark and starting from now"
+}
+
+/**
+ * A discarded mark is not routine: every event written between the last successful save and this
+ * start is silently never notified. `.agents/guidance/logging.md` — *"warn is used when the state
+ * being logged may be a problem"* — and the level is what an operator filters on. Kept as a full
+ * `Record` over the union so a new outcome has to choose one.
+ */
+const stateOutcomeLevels: Record<LoadStateResult["_tag"], "info" | "warn"> = {
+  LoadedState: "info",
+  NoState: "info",
+  LoadStateFailure: "warn"
 }
 
 const installShutdownHandlers = (logger: Logger, controller: AbortController): void => {

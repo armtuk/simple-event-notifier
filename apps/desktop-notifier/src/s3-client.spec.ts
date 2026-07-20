@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import { describeBucketFailure, probeBucket, probeCredentials } from "./s3-client.ts"
 import { createFakeS3 } from "./testing/fake-s3.ts"
 
-const withStatus = (status: number): unknown => Object.assign(new Error("UnknownError"), { $metadata: { httpStatusCode: status } })
+const withStatus = (status: number): Error => Object.assign(new Error("UnknownError"), { $metadata: { httpStatusCode: status } })
 
 describe("probeBucket", () => {
   it("reports a reachable bucket", async () => {
@@ -10,11 +10,32 @@ describe("probeBucket", () => {
     expect((await probeBucket(client, "events.test.example.com"))._tag).toBe("BucketReachable")
   })
 
-  it("reports an unreachable bucket rather than throwing", async () => {
-    const { client } = createFakeS3({ objects: {}, failWith: new Error("NoSuchBucket") })
-    const result = await probeBucket(client, "missing")
-    expect(result._tag).toBe("BucketUnreachable")
-    expect(result._tag === "BucketUnreachable" ? result.message : "").toContain("NoSuchBucket")
+  it.each([
+    { status: 404, why: "the bucket does not exist here" },
+    { status: 403, why: "the credentials may not read it" },
+    { status: 301, why: "it lives in another region" }
+  ])("calls a $status definitively unreachable, because $why", async ({ status }) => {
+    const { client } = createFakeS3({ objects: {}, failWith: withStatus(status) })
+    expect((await probeBucket(client, "missing"))._tag).toBe("BucketUnreachable")
+  })
+
+  /**
+   * A transport failure says nothing about whether the bucket exists, and a laptop daemon started at
+   * login routinely races wifi association — so it must not be treated as a misconfiguration.
+   */
+  it.each([
+    { label: "a DNS failure", cause: new Error("getaddrinfo ENOTFOUND s3.us-east-1.amazonaws.com") },
+    { label: "a dropped connection", cause: new Error("socket hang up") },
+    { label: "an S3 5xx", cause: withStatus(503) }
+  ])("calls $label inconclusive rather than unreachable", async ({ cause }) => {
+    const { client } = createFakeS3({ objects: {}, failWith: cause as Error })
+    expect((await probeBucket(client, "events.test.example.com"))._tag).toBe("BucketProbeInconclusive")
+  })
+
+  it("still carries a readable reason on an inconclusive probe", async () => {
+    const { client } = createFakeS3({ objects: {}, failWith: new Error("socket hang up") })
+    const result = await probeBucket(client, "events.test.example.com")
+    expect(result._tag === "BucketProbeInconclusive" ? result.message : "").toContain("socket hang up")
   })
 })
 

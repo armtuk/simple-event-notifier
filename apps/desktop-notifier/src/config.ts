@@ -15,13 +15,18 @@ export type NotifierKind = (typeof notifierKinds)[keyof typeof notifierKinds]
 /**
  * The environments a log record may be stamped with.
  *
- * `.agents/guidance/logging.md` names `["dev","qa","stage","prod"]`. `local` is added because
- * `.agents/guidance/aws.md` lists it among this project's environments, and this daemon is a
- * *desktop* client whose ordinary home is a laptop — rejecting the value the project's own
- * vocabulary uses would make the tool unusable out of the box. It is an explicitly recognized
- * fifth value, not a silent fallback: an unrecognized `ENV` still fails configuration.
+ * This is **the project's one environment vocabulary**, `.agents/guidance/aws.md`'s list, and the
+ * Terraform `env` variable validates against exactly the same five values — the spelling has to
+ * agree, because it names buckets and DNS labels on one side and stamps log records on the other.
+ * It differs from `.agents/guidance/logging.md`'s `["dev","qa","stage","prod"]` in two ways: `local`
+ * is included (this daemon's ordinary home is a laptop, and refusing the project's own default
+ * environment would make it unusable), and the third environment is spelled `staging` rather than
+ * `stage`. Both are recorded once in `CLAUDE.md` § Documented carve-outs.
+ *
+ * These are explicit literals, not fallbacks: an unrecognized `ENV` still fails configuration, which
+ * is the harm `logging.md`'s closed set exists to prevent.
  */
-export const deploymentEnvs = { local: "local", dev: "dev", qa: "qa", stage: "stage", prod: "prod" } as const
+export const deploymentEnvs = { local: "local", dev: "dev", qa: "qa", staging: "staging", prod: "prod" } as const
 
 export type DeploymentEnv = (typeof deploymentEnvs)[keyof typeof deploymentEnvs]
 
@@ -55,7 +60,7 @@ const ConfigSchema = /*#__PURE__*/ Schema.Struct({
   stateFile: Schema.NonEmptyString,
   logLevel: Schema.Literal(logLevels.error, logLevels.warn, logLevels.info, logLevels.debug),
   logFile: Schema.optionalWith(Schema.NonEmptyString, { exact: true }),
-  env: Schema.Literal(deploymentEnvs.local, deploymentEnvs.dev, deploymentEnvs.qa, deploymentEnvs.stage, deploymentEnvs.prod),
+  env: Schema.Literal(deploymentEnvs.local, deploymentEnvs.dev, deploymentEnvs.qa, deploymentEnvs.staging, deploymentEnvs.prod),
   notifier: Schema.Literal(notifierKinds.auto, notifierKinds.toasted, notifierKinds.shell)
 }).annotations({ identifier: "DaemonConfig" })
 
