@@ -4,6 +4,9 @@ locals {
   # {usage}.{env}.{system}.{domain}, per .agents/guidance/aws.md.
   event_bucket_name = coalesce(var.event_bucket_name, "events.${var.env}.${local.system_domain}")
 
+  ingest_domain        = "${var.ingest_subdomain}.${local.system_domain}"
+  ingest_function_name = "${var.subdomain}-webhook-ingest-${var.env}"
+
   tags = merge({
     System      = var.subdomain
     Environment = var.env

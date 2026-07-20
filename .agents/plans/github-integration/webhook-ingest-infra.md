@@ -2,12 +2,12 @@
 id: AWE-155
 title: Generic webhook ingest (API Gateway + Lambda)
 type: story
-status: Pending
+status: Implementation Adjustment
 parent: ./feature.md
 branch: github-integration
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-28
-updated: 2026-06-29
+updated: 2026-07-19
 ---
 
 # Story: Generic webhook ingest (API Gateway + Lambda)
@@ -295,3 +295,84 @@ From `.agents/general.md`, `.agents/guidance/aws.md`, `.agents/guidance/api-serv
 - Level 2: `pnpm --filter @personal-events/webhook-ingest typecheck`
 - Level 3: `pnpm --filter @personal-events/webhook-ingest test`
 - Level 4 (infra): `terraform -chdir=infra/personal-events fmt -check && validate && plan` clean; post-apply `curl` smoke test.
+
+## Plan refresh (2026-07-19) — what changed between planning and execution
+
+| Planned assumption | Reality | Action |
+| :--- | :--- | :--- |
+| `S3EventRepository` lives at `apps/webhook-ingest/src/s3-event-repository.ts` in one bullet and in shared `packages/event-sink/` in another | the plan contradicts itself | Shipped in `packages/event-sink/` — the shared home the resolved decision names, so AWE-157 reuses the identical write path. The app-local path does not exist |
+| `S3EventRepository.putEvents` does `JSON.stringify(e)` | the contract owns encoding, and `workItem` is stored verbatim only because `encodeEvent` says so | Bodies go through `encodeEventJson`. Stringifying would work today and silently stop being correct the first time the contract grows an encode step |
+| `terraform … validate` after `lambda.tf` | `archive_file` needs the bundle to exist, and `plan` reads it — not just `apply` | `turbo`'s `plan` **and** `deploy` tasks now `dependsOn: ["^build"]`, and `infra` declares `@personal-events/webhook-ingest` as a workspace devDependency so that edge is real in the package graph. Documented in `infra/README.md` § Build before you plan |
+| `handler.ts` is the thin orchestrator with an `if (!integration)` inline | the module that reads `process.env` cannot also be the module a spec drives | Split: `ingest-handler.ts` is a **factory** taking an injected registry + logger; `composition.ts` is the composition root; `handler.ts` is two lines. Every other module is exercisable without an environment |
+| `.agents/frameworks/effect/index.md`, `v3/_main/schema.md` | `.agents/cache/effect/**` does not exist here | Verified against installed typings |
+
+### Design decisions taken during implementation
+
+- **The registry is built on a null prototype.** Its lookup key is a path segment supplied by an
+  anonymous caller on an internet-facing endpoint. A plain object literal resolves `POST /toString`
+  to `Object.prototype.toString` — which the handler would then invoke as an integration. Caught by
+  the spec `does not resolve inherited object properties as integrations`.
+- **`events` maps to 202, not 200**, and **`ack` carries a reason**. The reason field is what makes
+  "acknowledged: ping" and "acknowledged: duplicate delivery" distinguishable in a response and a
+  log, which matters for AWE-156's dedupe path.
+- **A misconfigured function answers 500 rather than failing to import.** Throwing at module scope
+  produces `Runtime.ImportModuleError` and no log line of ours; `composition.ts` captures the config
+  failure, logs it once, and returns a handler that 500s.
+- **The handler catches a thrown integration.** An integration is contracted to return an outcome,
+  so reaching that catch is a defect in the integration — but an unhandled rejection would make one
+  bad provider an opaque 502 for every provider, with no log of ours.
+- **IAM is `s3:PutObject` only, and deliberately not `AWSLambdaBasicExecutionRole`** (which grants
+  logging across every log group in the account). The log group is created explicitly so retention is
+  actually set — an implicitly created group keeps logs forever and never appears in a plan.
+- **The bundle includes the AWS SDK** (`noExternal`). It is a size-for-determinism trade: the
+  alternative is a function whose behaviour shifts when AWS rolls the managed runtime's SDK version.
+  `NODE_OPTIONS=--enable-source-maps` is set so the shipped sourcemaps are not dead weight.
+- **No bucket pre-flight in the Lambda.** `.agents/guidance/aws.md` asks for one *at service
+  start-up*; for a function whose cold start is inside a delivery's ~10 s budget, a `HeadBucket` on
+  every cold start buys a clearer error at the cost of latency on the request that pays for it — and
+  the first `PutObject` failure already produces a 5xx with the bucket named. `probeEventBucket` is
+  in `event-sink` for the long-running poller (AWE-157), where the guidance's intent is exact.
+
+## Deferred verification — NOT met under the code-and-dry-run fence
+
+`terraform apply` and every command touching a real AWS resource were out of bounds. These
+acceptance criteria are therefore **unverified** — not failed, untested.
+
+| Acceptance criterion | Status | Command the user must run to close it |
+| :--- | :--- | :--- |
+| Terraform provisions the HTTP API, Lambda, IAM role, ACM certificate and Route53 record | **Unverified** | `pnpm --filter @personal-events/webhook-ingest build && terraform -chdir=infra/personal-events apply` |
+| A second `plan` after `apply` shows no drift | **Unverified** | `terraform -chdir=infra/personal-events plan` → expect "No changes." |
+| The Lambda is reachable at `https://hooks.personal-events.fifthdimensionengineering.com` | **Unverified** | `curl -sS -o /dev/null -w '%{http_code}\n' -XPOST "$(terraform -chdir=infra/personal-events output -raw ingest_url)/github" -d '{}'` → expect **404** (empty registry until AWE-156) |
+| An unroutable path returns 404 **from the deployed function** | **Unverified** | the same `curl` against `/nope`, then `aws logs tail /aws/lambda/$(terraform -chdir=infra/personal-events output -raw ingest_function_name) --since 5m` and look for `unroutable webhook path` |
+| The ACM certificate validates through the delegated child zone | **Unverified** | `dig +short NS personal-events.fifthdimensionengineering.com` must return the child zone's nameservers **before** apply, or validation hangs at `PENDING_VALIDATION` |
+| The IAM role can actually `PutObject` into the event bucket | **Unverified** | closed by AWE-156's end-to-end signed `curl`; until an integration is registered nothing writes |
+| A missing IAM permission surfaces clearly in the logs | **Unverified** | temporarily remove the `WriteEvents` statement, apply, post a signed delivery, and confirm the `PutEventsFailure` message names the bucket and key |
+| Lambda stays within its duration budget under a real delivery | **Unverified** | `aws logs tail` and read the `REPORT` line's `Duration` |
+
+**No AWS resource was created. No `terraform apply` was run. Nothing was deployed.**
+
+### What WAS verified
+
+- `terraform fmt -check -recursive infra` clean; `terraform -chdir=personal-events validate`
+  **Success** (and `bootstrap` still validates).
+- **A real, clean `terraform plan`**, run against a scratch copy of `infra/` with `backend.tf`
+  removed so local state was used and the remote-state bucket was never touched:
+  **`Plan: 24 to add, 0 to change, 0 to destroy`** with no errors — Level 0's 8 resources plus this
+  story's 16. Computed outputs resolved as expected:
+  `ingest_url = "https://hooks.personal-events.fifthdimensionengineering.com"`,
+  `ingest_function_name = "personal-events-webhook-ingest-prod"`. Nothing was applied.
+  - The `data "archive_file"` zipped the real `apps/webhook-ingest/dist` bundle, so the
+    build-before-plan dependency is proven rather than assumed.
+- **52 specs** over the app, driving the **real router** with a stub `WebhookIntegration` — every
+  `WebhookOutcome` → its status code, an unroutable path → 404 with the offending path and the
+  registered set logged, a thrown integration → 500 with nothing leaked to the caller, base64 and
+  plain bodies preserved byte-for-byte. **26 specs** over `event-sink`.
+
+### Validation actually run
+
+| Level | Command | Result |
+| :--- | :--- | :--- |
+| 1 — style | `pnpm --filter @personal-events/webhook-ingest lint` | clean |
+| 2 — types | `pnpm --filter @personal-events/webhook-ingest typecheck` | clean |
+| 3 — specs | `pnpm --filter @personal-events/webhook-ingest test` | 52 passed |
+| 4 — infra | `terraform fmt -check -recursive infra`, `validate` both roots, and the scratch `plan` above | clean / Success / 24 to add |

@@ -34,3 +34,5 @@ override.tf.json
 .terraformrc
 terraform.rc
 backend.hcl
+# Lambda deployment packages built by `data "archive_file"` at plan time
+.terraform-artifacts/

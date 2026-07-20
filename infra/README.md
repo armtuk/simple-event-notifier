@@ -7,7 +7,7 @@ for why it is shaped this way.
 | Module | Kind | State | Creates | Applied |
 | :--- | :--- | :--- | :--- | :--- |
 | `bootstrap/` | root | local, then migrated into the bucket it creates | the Terraform remote-state bucket | once, by hand |
-| `personal-events/` | root | remote (S3 + `use_lockfile`) | the S3 event bucket, the delegated hosted zone, and the `NS` delegation in the parent zone | on every change |
+| `personal-events/` | root | remote (S3 + `use_lockfile`) | the S3 event bucket, the delegated hosted zone, the `NS` delegation in the parent zone, and the webhook ingest (Lambda + HTTP API + `hooks.` hostname) | on every change |
 | `modules/hardened-bucket/` | shared | — | the bucket hardening both roots need: ACLs off, public access blocked four ways, versioned, SSE-S3, incomplete uploads reaped | called, never applied directly |
 
 `modules/hardened-bucket/` exists so "how we harden an S3 bucket" changes in one place. Only the
@@ -22,6 +22,11 @@ Everything follows `{usage}.{env}.{system}.{domain}` from `.agents/guidance/aws.
 - system domain — `personal-events.fifthdimensionengineering.com`
 - event bucket — `events.prod.personal-events.fifthdimensionengineering.com`
 - state bucket — `tfstate.prod.personal-events.fifthdimensionengineering.com`
+- webhook ingest — `hooks.personal-events.fifthdimensionengineering.com`
+
+The ingest hostname omits the `{env}` label that the bucket names carry. This is a single-environment
+personal system and the URL is pasted into third-party webhook settings by hand, so the shorter name
+wins; set `-var ingest_subdomain=…` if a second environment ever needs `hooks-dev.`.
 
 ## Offline checks (no AWS account required)
 
@@ -53,12 +58,42 @@ terraform -chdir=personal-events init -backend-config=backend.hcl
 
 `backend.hcl` is gitignored — it names the state bucket, which is environment-specific.
 
+## Build before you plan
+
+The webhook-ingest Lambda's deployment package is the tsup bundle from `apps/webhook-ingest`, zipped
+by `data "archive_file"`. **Terraform reads that directory at plan time**, so a plan run before the
+bundle exists fails with *"error archiving directory: could not archive missing directory"* rather
+than producing an empty function.
+
+```bash
+pnpm --filter @personal-events/webhook-ingest build   # writes apps/webhook-ingest/dist
+terraform -chdir=personal-events plan
+```
+
+`pnpm deploy` at the repo root runs the app build first (turbo `dependsOn: ["build"]`), so the
+one-liner is safe; the two-step form above is what to run when driving Terraform directly.
+
 ## Apply the substrate
 
 ```bash
 terraform -chdir=personal-events plan     # review
 terraform -chdir=personal-events apply
 ```
+
+### Verify the ingest
+
+```bash
+INGEST=$(terraform -chdir=personal-events output -raw ingest_url)
+
+curl -sS -o /dev/null -w '%{http_code}\n' -XPOST "$INGEST/github" -d '{}'   # => 404 until AWE-156
+curl -sS -o /dev/null -w '%{http_code}\n' -XPOST "$INGEST/nope"   -d '{}'   # => 404, unroutable
+
+aws logs tail "/aws/lambda/$(terraform -chdir=personal-events output -raw ingest_function_name)" --since 5m
+```
+
+A 404 from an unroutable path is the **correct** answer for this stage: the function ships with an
+empty integration registry, and GitHub registers itself into it in AWE-156. A `403` instead means
+the request never reached the function — check the custom domain mapping and the certificate.
 
 ### Verify the apply
 
@@ -97,3 +132,7 @@ the state bucket is the only recovery path for state. Empty them consciously if 
 | `no matching Route 53 Hosted Zone found` | `parent_zone_name` does not exist in this account | check the account, or set `-var parent_zone_name=…` |
 | `Backend initialization required` | the state bucket is not reachable, or `backend.hcl` is missing | re-run step 3 above, or use `-backend=false` for offline checks |
 | `BucketAlreadyExists` | S3 bucket names are globally unique | override with `-var event_bucket_name=…` |
+| `could not archive missing directory` on plan | the Lambda bundle has not been built | `pnpm --filter @personal-events/webhook-ingest build` |
+| ACM validation hangs at `PENDING_VALIDATION` | the child zone is not yet delegated, so the validation record is unreachable | confirm `dig +short NS personal-events.…` returns the child zone's nameservers first |
+| `certificate not found` when creating the custom domain | the certificate is in a different region from the API | HTTP API custom domains are REGIONAL — the cert must be in `var.region`, **not** pinned to us-east-1 |
+| `curl` to the ingest returns 403 with no log line | the request never reached the function | check `aws_apigatewayv2_api_mapping` and that DNS resolves to the API's regional endpoint |
