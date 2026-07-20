@@ -266,8 +266,8 @@ They are not failures and they are not met — they are untested.
 | Bucket versioning / public-access-block / SSE are actually set on the live bucket | **Unverified** | `aws s3api get-bucket-versioning`, `get-public-access-block`, `get-bucket-encryption` |
 | Re-apply is idempotent | **Unverified** | a second `terraform apply` |
 | Remote state initializes against the S3 backend with `use_lockfile` | **Unverified** | the bootstrap runbook, then `terraform init -backend-config=backend.hcl` |
-| A non-existent parent zone fails the plan with an actionable message | **Unverified** | `terraform plan -var parent_zone_name=does-not-exist.example` |
-| Missing/incorrect credentials fail with a clear error | **Unverified** | `AWS_PROFILE=nope terraform plan` |
+| A non-existent parent zone fails the plan with an actionable message | **Unverified** | `terraform -chdir=infra/personal-events plan -var parent_zone_name=does-not-exist.example` |
+| Missing/incorrect credentials fail with a clear error | **Unverified** | `AWS_PROFILE=nope terraform -chdir=infra/personal-events plan` |
 
 **No NS records were written into the live `fifthdimensionengineering.com` zone.**
 
@@ -275,8 +275,9 @@ They are not failures and they are not met — they are untested.
 
 - `terraform fmt -check -recursive` clean across both modules (also runs as the `infra` member's
   turbo `lint` task).
-- `terraform init -backend=false && terraform validate` — **Success** for both `bootstrap/` and
-  `personal-events/`.
+- `terraform -chdir=<root> init -backend=false -input=false && terraform -chdir=<root> validate` —
+  **Success** for both `bootstrap/` and `personal-events/`, from a clean checkout with `.terraform/`
+  removed. This is exactly what `pnpm --filter @personal-events/infra validate` runs.
 - **A real, clean `terraform plan`.** Run against a scratch copy of `personal-events/` with
   `backend.tf` removed (so local state was used and the non-existent remote-state bucket was not
   touched): `Plan: 8 to add, 0 to change, 0 to destroy` with **no errors**. Nothing was applied.
@@ -288,3 +289,41 @@ They are not failures and they are not met — they are untested.
   - Computed outputs resolved as expected —
     `event_bucket_name = "events.prod.personal-events.fifthdimensionengineering.com"`,
     `system_domain = "personal-events.fifthdimensionengineering.com"`.
+
+
+## R1 review fixes (2026-07-19)
+
+Applied after the independent R1 pass (`claude-automated-code-review.md` → `## R1 — 2026-07-19`).
+
+- **#8 MINOR (dry-wet) — the six-resource hardened-bucket block was duplicated** across
+  `bootstrap/state-bucket.tf` and `personal-events/s3.tf`, along with a byte-identical `versions.tf`.
+  The axis of change is "how we harden an S3 bucket", and it changed in two places. Extracted
+  `infra/modules/hardened-bucket/`, parameterized by `bucket_name`, `transitions`,
+  `noncurrent_version_retention_days`, `newer_noncurrent_versions_kept`, and
+  `abort_incomplete_upload_days`; both roots now call it. The bootstrap module uses it too — its
+  bootstrapping constraint is about *Terraform state*, not module resolution, and a local module
+  directory is just files on disk. That reasoning is now a comment in `state-bucket.tf` rather than
+  left implicit.
+  - Resource addresses moved to `module.event_log.*` / `module.state.*`. **No state exists yet, so no
+    `terraform state mv` is required** — but if this branch is ever rebased onto an applied state, a
+    `state mv` per resource is the migration.
+  - **Re-planned after the refactor:** still `Plan: 8 to add, 0 to change, 0 to destroy`, the same
+    eight resources, the same parent-zone lookup (`Z022596723T54QKGKXEYR`), and all three lifecycle
+    rules intact (`tier-current-versions` 90d→STANDARD_IA / 365d→GLACIER_IR, `trim-superseded-versions`
+    keep-5 / 180d, `abort-incomplete-uploads` 7d).
+- **#16 MINOR (docs) — `infra/README.md` claimed `pnpm … validate` was an offline check; it was not.**
+  The script was a bare `terraform validate` with no `init`, which fails on a clean checkout
+  (`.terraform/` is gitignored) with *"Module not installed"*, and `bootstrap` had no `validate`
+  script at all despite this story claiming both modules validate. Both scripts now run
+  `init -backend=false -input=false` first, `validate` covers **both** roots, and `lint` is a single
+  recursive `fmt -check` that also covers the new shared module. Verified from a clean checkout with
+  `.terraform/` deleted.
+- **#17 NIT — two deferred-verification commands omitted `-chdir`** and so would have failed from the
+  repo root for the wrong reason. Corrected above; the table is now copy-pasteable.
+- **#20 NIT — dotted bucket names force path-style addressing.** Not a deviation (it follows
+  `.agents/guidance/aws.md` exactly), but now recorded as a conscious trade-off in the ADR's
+  "Accepted trade-off: dotted bucket names" section rather than left implicit.
+
+**Nothing in this round changed the fence position:** no `terraform apply`, no AWS resource created,
+no NS record written into the live `fifthdimensionengineering.com` zone. Every row in the
+"Deferred verification" table above still stands as written.

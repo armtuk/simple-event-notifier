@@ -240,15 +240,18 @@ Deltas from the plan as written, and why:
   slice-don't-dump rather than passing the aggregate into the formatter.
 - **`encodeEvent` / `encodeEventJson` added.** The plan only specified the decode direction, but a
   producer-facing contract that cannot serialize is half an interface; the spec asserts a
-  byte-for-byte `decode → encode` round trip against the exemplars (this is what catches
-  `Schema.URL` re-serializing differently from the input string).
+  byte-for-byte `decode → encode` round trip.
 - **`parseEventJson` added** with its own `invalidEventJson` reason, so the daemon can tell "the S3
   object was not JSON" apart from "the JSON was not an event".
-- **Key regex captures the type segment as `[^.]+`, not `(alert|notification)`**, and resolves it
-  through a `Partial<Record<string, EventType>>` lookup. Baking the alternation into the regex made
-  an unknown type look like a structurally malformed key; this way the failure message names
-  `eventType`. Same reasoning for capturing priority as `(\d+)` and letting `Priority`'s
-  `between(1, 8)` produce the range error.
+- **Key regex captures the type segment as `[^.]+`, not `(alert|notification)`**, so an unknown type
+  is rejected by `EventTypeSchema` with a message naming `eventType` rather than looking like a
+  structurally malformed key. Same reasoning for priority: the regex checks only the *shape* and
+  `Priority`'s `between(1, 8)` produces the range message.
+  - **Correction (R1 review, finding #3):** as first written this claim was **false**. `matchKey`
+    resolved the segment eagerly through a `Partial<Record<string, EventType>>` lookup and folded an
+    unresolved type back into the same shape error, so the message never mentioned `eventType`. The
+    lookup is gone; the segment is now cast at the boundary with `EventTypeSchema` as the actual
+    gate, and `event-key.spec.ts` asserts the message contains `eventType`.
 - **Module split as planned** plus `errors.ts` (the failure channel) and `testing/exemplars.ts`
   (the exemplar loader, deliberately outside the published entry point).
 - **`packages/_placeholder` deleted** — this package replaces it as the first real member.
@@ -256,3 +259,43 @@ Deltas from the plan as written, and why:
 Result: 59 specs across `event.spec.ts` / `event-key.spec.ts` / `parse.spec.ts`, all green;
 `biome check`, `tsc --noEmit`, and `tsup` (ESM + `.d.ts`) all clean; the built `dist/index.js` was
 smoke-tested end to end (exemplar → `parseEvent` → `buildEventKey` → `parseKey`).
+
+## R1 review fixes (2026-07-19)
+
+Applied after the independent R1 pass (`claude-automated-code-review.md` → `## R1 — 2026-07-19`).
+Spec count rose 59 → 87.
+
+- **#1 BLOCKER — variable-precision timestamps broke key ordering.** `isoInstantPattern` allowed an
+  optional, variable-width fraction. Because `.` (0x2E) sorts below every digit and `Z` (0x5A) above
+  every digit, `…02Z…` > `…02.500Z…` and `…02.12Z…` > `…02.123Z…` — an *earlier* event sorted after a
+  later one, so a consumer's `StartAfter` high-water mark skipped it **permanently**. Both committed
+  exemplars used different precisions, so this was live, not theoretical. The fraction is now
+  mandatory and exactly three digits (the shape `Date.prototype.toISOString()` emits), mirrored in
+  `eventKeyPattern`; `valid-agent-notification.json` moved to `2026-07-19T09:15:02.000Z`; the
+  "millisecond-less timestamp" spec is deleted and replaced by two ordering describe-blocks that
+  assert lexicographic order equals chronological order across a mixed table, plus rejection rows
+  for every non-three-digit form. Fixed now, this is free; after the first `apply` it is a history
+  migration — and the ADR calls the key scheme a one-way door.
+- **#3 MAJOR — unknown `eventType` produced a generic shape error**, and the execution note above
+  claimed the opposite. Both the code and the claim are corrected (see the corrected bullet).
+- **#5 MAJOR — `workItem` was not a byte-stable codec.** `Schema.URL` encodes via `url.toString()`,
+  and `URL` normalizes (`https://github.com` → `https://github.com/`, `HTTPS://GitHub.com/Foo` →
+  `https://github.com/Foo`). The round-trip spec only passed because the one exemplar carrying a
+  `workItem` was already in normal form. With S3 as the permanent source of record, any client doing
+  `parseEvent → flip a flag → encodeEvent → PutObject` would have silently rewritten stored bytes.
+  Replaced with `WorkItemUrl` — a `Schema.String` filtered on `URL.canParse`, so encode is identity
+  and consumers get a `string` (no more `.href` at call sites). Specs now round-trip
+  **non-normalized** inputs, which is the property the old spec failed to test.
+- **#10 MINOR — the key codec was not injective.** `p(\d+)` accepted `p05`, which decoded to
+  priority 5 and re-encoded as `p5`, so two distinct S3 keys denoted one event. Tightened to a single
+  digit `p(\d)`; `p0`/`p9` still reach `Priority` and get the range message, while `p05` is now
+  rejected. Specs pin both.
+- **#7 MAJOR — exemplars and their loader were copy-pasted into the consumer.** Three exemplar files
+  were byte-identical in `apps/desktop-notifier/exemplars/`. These files *are* the contract, so a
+  drifting copy would let a consumer's suite pass against a stale shape. They are now published from
+  this package via a `./testing` subpath export (`readExemplarText`/`readExemplar`/`readExemplarEvent`,
+  plus `exemplarReader(dir)` for a consumer's own directory) and an `./exemplars/*` export, with
+  `files: ["dist","exemplars"]`. The app's copies are deleted; it keeps only `not-json.txt`, which is
+  genuinely its concern.
+- **#9 MINOR — `describeCause` was copy-pasted five times.** Now `src/describe-cause.ts`, exported
+  from the package root and imported by all four app call sites.

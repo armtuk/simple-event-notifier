@@ -20,6 +20,11 @@ The AWS substrate for personal-events is provisioned with **Terraform**, in two 
 - `infra/personal-events/` — the system's substrate: the S3 event bucket and the delegated Route53
   zone. Its state lives in the bucket the bootstrap module created.
 
+Both roots share `infra/modules/hardened-bucket/`, which owns the project's answer to "how is an S3
+bucket hardened" — ACLs disabled, public access blocked four ways, versioning on, SSE-S3, and
+incomplete multipart uploads reaped. Only retention and tiering differ between the two buckets, and
+those are module inputs.
+
 Three sub-decisions ride along:
 
 1. **State locking uses native S3 conditional writes (`use_lockfile = true`), not a DynamoDB lock
@@ -73,6 +78,17 @@ on current versions would silently delete the system's data.
 - **SSE-KMS** instead of SSE-S3 — rejected: these are personal notifications, not regulated data;
   KMS adds per-request cost and key administration for no threat-model benefit. Revisit if event
   payloads ever carry secrets.
+
+### Accepted trade-off: dotted bucket names
+
+Bucket names follow `.agents/guidance/aws.md`'s `{usage}.{env}.{system}.{domain}` convention, so
+they contain dots (`events.prod.personal-events.fifthdimensionengineering.com`). A multi-label
+bucket name cannot use virtual-hosted-style HTTPS — the `*.s3.<region>.amazonaws.com` wildcard
+certificate does not match it — so the SDK falls back to path-style addressing, and the name cannot
+later serve as a same-name CloudFront/S3-website origin without a separate alias. This is chosen,
+not accidental: the naming convention's operational clarity is worth more here than
+virtual-hosted-style addressing, because nothing serves these objects over public HTTPS. Revisit if
+the bucket ever needs to front a CloudFront distribution directly.
 
 ## Reversibility
 

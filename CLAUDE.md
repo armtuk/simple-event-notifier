@@ -45,3 +45,21 @@ Biome covers no-semicolons, double quotes, width 140, `noExplicitAny`, `noEnum`,
 - **Result types** — return `Either`/tagged unions, never bare `null`/`undefined`.
 - **`Record<K, T>` lookups** instead of `if`/`else if` chains keyed on one discriminator.
 - **Arrow functions** by default; `async` on every promise-returning function.
+
+## Documented carve-outs from the shared guidance
+
+Deviations recorded here so they are deliberate and bounded rather than eroding silently. Anything
+not on this list follows `.agents/` as written.
+
+- **Early-return guard clauses are exempt from "always use if AND else."**
+  `.agents/languages/typescript/typescript.md` states the no-fall-through rule unconditionally, but
+  a guard that `return`s (a rejected config, an already-aborted signal, an unreachable bucket) reads
+  worse forced into an `else`, and the rule's real target is *branch selection* on one discriminator
+  — which must still use a `Record` lookup. A guard clause selects nothing; it exits. This exemption
+  covers guards that return or throw immediately, nothing more.
+- **`ENV` accepts `local` in addition to `.agents/guidance/logging.md`'s
+  `["dev","qa","stage","prod"]`.** `.agents/guidance/aws.md` lists `local` among this project's
+  environments, and the desktop notifier's ordinary home is a laptop. It is an explicitly recognized
+  value, not a silent fallback — an unrecognized `ENV` still fails startup.
+- **`rewriteRelativeImportExtensions` replaces `allowImportingTsExtensions`** — see the TypeScript
+  section above.

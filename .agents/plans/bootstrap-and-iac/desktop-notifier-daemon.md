@@ -297,4 +297,61 @@ story's deferred section). The following are **unverified**:
 - **Missing configuration:** starting with no `EVENT_BUCKET` prints
   `Invalid daemon configuration: DaemonConfig └─ ["bucket"] └─ is missing` and exits 1.
 - **Malformed object handling, mark advance, pagination, restart-without-re-notify, and same-
-  millisecond events** are all covered by the unit suite against the fake S3 transport.
+  millisecond events** are all covered by the unit suite against the fake S3 transport — *not*
+  against the built daemon binary.
+
+## R1 review fixes (2026-07-19)
+
+Applied after the independent R1 pass (`claude-automated-code-review.md` → `## R1 — 2026-07-19`).
+Spec count rose 60 → 87.
+
+- **#2 MAJOR — `runDaemon` retained one promise and one async frame per tick, forever.** Returning
+  the recursive call from an `async` function chains every tick's promise to the next, so the first
+  never settles until the last does — ~2,880 retained frames/day at the default interval, in a
+  process meant to run for weeks. It was also an unrecorded deviation from the plan's resolved
+  decision ("a self-scheduling async tick (recursive `setTimeout`)"). Rewritten to schedule each tick
+  from inside the previous tick's timer callback and discard its promise, so frames unwind; the loop
+  now holds only `state` and a timer handle, which **is** the shape the plan specified.
+  - Care was needed to preserve shutdown semantics: abort **between** ticks stops immediately, abort
+    **during** a tick lets that tick finish raising notifications and persisting its mark (the log
+    line says "finishing the current tick"). A first attempt resolved on the abort event
+    unconditionally and cut the in-flight tick short — caught by the existing spec, and now guarded
+    by a `ticking` flag plus a new spec asserting ticks settle independently.
+- **#4 MAJOR — no bucket pre-flight**, which `.agents/guidance/aws.md` § S3 § Usage in Code
+  explicitly mandates. A typo'd `EVENT_BUCKET` produced a process that looked healthy: it started,
+  backed off to the 5-minute ceiling, and notified nobody forever. `probeBucket` (`HeadBucketCommand`,
+  same tagged-union shape as `probeCredentials`) now gates `start()`. `HeadBucket` answers with a
+  bodyless 404/403 whose SDK rendering is a bare `UnknownError`, so `describeBucketFailure` maps the
+  status onto what to actually fix. **Verified against the built daemon:** a non-existent bucket now
+  exits 1 with *"no such bucket in this region — check EVENT_BUCKET and AWS_REGION"*.
+- **#6 MAJOR — no spec asserted any log line**, while `feature.md` marked "a malformed object is
+  logged and skipped" as **Met**. `.agents/tests.md` requires logging itself to be validated, and for
+  this daemon the log line *is* the entire user-visible signal for anything not turned into a
+  notification. Added `testing/capture-logger.ts` — a real winston logger with a `Stream` transport
+  and `format.json()`, so assertions run against the same serialization the file transport produces,
+  `defaultMeta` included. Five new specs assert the skip warning (level, `key`, `reason` naming the
+  field), a delivery info line per event with its triage fields, `service`/`env` on every record, the
+  error line for an undelivered notification, and that an idle tick is silent.
+- **#13 MINOR — `logLevel` and `env` were bare non-empty strings.** `ENV=production` passed and was
+  silently coerced to `dev`, mis-stamping every shipped record; `LOG_LEVEL=verbse` passed and left
+  the daemon running and emitting nothing. Both are now `Schema.Literal` unions, which also deleted
+  `resolveEnv`/`deploymentEnvByName` from `logger.ts`. **Deviation:** the accepted `env` set adds
+  `local` to `.agents/guidance/logging.md`'s four — `.agents/guidance/aws.md` lists `local` among
+  this project's environments and this is a laptop-resident daemon, so rejecting it would make the
+  tool unusable out of the box. It is an explicit fifth value, not a fallback; an unrecognized `ENV`
+  still fails startup. Recorded in `CLAUDE.md` § Documented carve-outs.
+- **#14 MINOR — slice-don't-dump.** `deliverAll`/`deliverOne` destructured `{ notifier, logger }` but
+  their *parameter type* was still the whole `DaemonDependencies`, so `s3`/`bucket`/`stateFile`
+  remained in reach. Introduced `Delivery` and narrowed both.
+- **#7 MAJOR (see AWE-150)** — this app's three duplicated exemplars are deleted; it now reads the
+  contract's canonical data from `@personal-events/event-model/testing` and keeps only
+  `not-json.txt`, which is genuinely its own concern.
+- **#9 MINOR** — the four local `describeCause` copies now import the one in the event-model package.
+
+### Re-verified locally after the fixes
+
+- Missing config, mistyped `ENV`, and an unknown `LOG_LEVEL` each exit 1 naming the offending field.
+- No credentials → *"Could not load credentials from any providers"*, exit 1.
+- Non-existent bucket → the new pre-flight refuses to start, exit 1 (previously: started and backed
+  off forever).
+- `DESKTOP_NOTIFIER_E2E=1` still raises real macOS notifications from real exemplar bodies.

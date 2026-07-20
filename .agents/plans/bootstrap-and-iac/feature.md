@@ -132,14 +132,14 @@ unverified and the command that closes each one.
 
 | Criterion | Status |
 | :--- | :--- |
-| `pnpm install && pnpm build && pnpm lint && pnpm test` succeed from a clean checkout | **Met** (plus `pnpm typecheck`; 119 specs green) |
-| The event model validates, rejects with a typed error, and round-trips event ⇄ object key | **Met** (59 specs, exemplar-driven) |
-| `terraform plan` is clean | **Met** — `Plan: 8 to add, 0 to change, 0 to destroy`, parent-zone data lookup resolved against the real account |
+| `pnpm install && pnpm build && pnpm lint && pnpm test` succeed from a clean checkout | **Met** (plus `pnpm typecheck`; 173 specs green, verified uncached with `--force`) |
+| The event model validates, rejects with a typed error, and round-trips event ⇄ object key | **Met** (87 specs, exemplar-driven; the round trip is now pinned as *injective* — every key the codec accepts re-encodes to itself) |
+| `terraform plan` is clean | **Met** — `Plan: 8 to add, 0 to change, 0 to destroy`, parent-zone data lookup resolved against the real account; re-confirmed after the shared-module refactor |
 | `terraform apply` creates the bucket and delegated zone; `dig NS …` resolves; re-`plan` shows no drift | **Unverified** — blocked by the fence, see AWE-151 |
 | A valid event object in the bucket produces a macOS notification within one poll interval | **Partially met** — the notification path was proven end to end locally with real macOS notifications from real exemplar bodies, but not against a provisioned bucket; see AWE-152 |
-| A malformed object is logged and skipped without crashing the daemon | **Met** (unit-verified against the real poller code path) |
-| Missing AWS credentials, an unreachable bucket, and an unparseable object each produce a clear log line rather than a crash | **Met** — all three exercised against the built daemon locally |
-| Guidance-conformance pass per story | **Met** — biome (incl. `noEnum`, `noExplicitAny`) + strict tsc clean; the rules no linter can express are recorded in `CLAUDE.md` |
+| A malformed object is logged and skipped without crashing the daemon | **Met** — the skip is unit-verified against the real poller code path, and the **log line itself** is now asserted (level `warn`, the offending `key`, and a `reason` naming the field) via a capturing winston transport. Before the R1 review this row was marked Met with no log assertion anywhere; that was an overclaim. |
+| Missing AWS credentials, an unreachable bucket, and an unparseable object each produce a clear log line rather than a crash | **Met** — credentials and bucket failures exercised against the **built daemon**; the unparseable-object path against the real poller code path in the unit suite. (Corrected: this row previously said "all three exercised against the built daemon", which was true of only two.) |
+| Guidance-conformance pass per story | **Met** — biome (incl. `noEnum`, `noExplicitAny`) + strict tsc clean; the rules no linter can express, and the two deliberate carve-outs from them, are recorded in `CLAUDE.md` |
 
 ### Cross-cutting decisions taken during execution
 
@@ -151,3 +151,31 @@ unverified and the command that closes each one.
   original acceptance criteria is **superseded**. ADR `2026-07-19-1900-iac-foundation` records it.
 - `.agents/cache/effect/**` does not exist in this repo, so the Effect API was verified against the
   installed typings. **Recommend running `/update-effect-docs`** before the next Effect story.
+
+
+## R1 code review — 2026-07-19
+
+An independent R1 pass (`claude-automated-code-review.md`) returned **1 blocker, 6 major, 8 minor,
+3 nits**. The blocker and all six majors are fixed, as are minors #8, #9, #10, #13, #14, #16 and
+nits #17, #18, #19, #20. Per-story detail is in each story's `## R1 review fixes` section.
+
+The blocker is worth restating here because it was a **silent data-loss bug in the load-bearing
+contract**: `isoInstantPattern` allowed a variable-width millisecond fraction, and since `.` sorts
+below every digit while `Z` sorts above every digit, object keys did **not** sort chronologically.
+A consumer's `StartAfter` high-water mark would jump past earlier events and never return them. The
+two committed exemplars already used different precisions, so this was live. Timestamps are now
+fixed at exactly three fractional digits, with specs asserting lexicographic order equals
+chronological order.
+
+Four findings were **deliberately not implemented** and are recorded below instead.
+
+## Follow-up candidates
+
+Recorded rather than fixed on this branch — captured so they are future work, not silent drops.
+
+| # | Item | Why it is deferred |
+| :-- | :--- | :--- |
+| #11 | The schema accepts values that cannot survive the key contract: `isoInstantPattern` is shape-only, so impossible instants (`2026-13-45T99:99:99.000Z`) pass and will `NaN` in any consumer doing `new Date(...)`; and `noDotPattern` forbids only `.`, so `source`/`name` may contain `/` (silently turning the key into a prefix), spaces, or control characters. | Both are real tightenings, but they narrow an already-published contract's accepted set. Now that #1 pins the fraction to three digits, `new Date(s).toISOString() === s` is an exact round-trip check and costs nothing — worth doing as a deliberate change with its own exemplars, not folded into a review-fix round. |
+| #12 | **Needs a product decision, not an engineering one.** A valid event whose *notification* fails is skipped permanently, because the mark advances over every listed key. Combined with `fallbackNotifier`'s latch, a machine where no notifier works (headless session, missing `notify-send`, TCC-denied `osascript`) logs an error per event and drops all of them, unreplayable. There is also no DLQ/quarantine anywhere, which `.agents/tests.md` names as a thing to assert on. | The bucket is the permanent source of record, so nothing is *lost* — but a consumer silently deciding an event was never seen is a semantics choice the owner should make: at-most-once (today) vs. retry-until-delivered vs. quarantine-and-continue. **Ask the user which they want** before implementing. Advancing past *unparseable* objects is separate and is correct as-is — the alternative is a poison pill that stalls every later event. |
+| #15 | One tick fans out an unbounded `Promise.all` over every new key. In steady state that is a handful; after a week asleep, or on the first run of the `--backfill` flag the plan anticipates, it is one concurrent `GetObject` per object in the window — enough to hit SDK socket limits and turn a recoverable catch-up into a whole-tick failure. | Needs a `maxObjectsPerTick` in `DaemonSchedule` and a chunked fetch. It is a real robustness gap but only bites on a large catch-up window, which cannot happen until the bucket exists and has history. Natural companion to the `--backfill` story. |
+| #20 | Dotted S3 bucket names force path-style addressing and rule out a same-name CloudFront origin later. | Not a defect — it follows `.agents/guidance/aws.md`'s naming convention exactly. Recorded as an accepted trade-off in ADR `2026-07-19-1900-iac-foundation`; revisit only if the bucket must front a CloudFront distribution. |
