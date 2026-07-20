@@ -1,7 +1,7 @@
 import { createS3Client, S3EventRepository } from "@personal-events/event-sink"
 import { Either } from "effect"
 import type { Logger } from "winston"
-import { type Environment, parseIngestConfig } from "./config.ts"
+import { type Environment, type IngestConfig, parseIngestConfig } from "./config.ts"
 import { createIngestHandler, type IngestHandler } from "./ingest-handler.ts"
 import { createIngestLogger } from "./logger.ts"
 import { createRegistry } from "./registry.ts"
@@ -29,7 +29,13 @@ export interface IngestApp {
   readonly logger: Logger
 }
 
-export type IntegrationFactory = (deps: { readonly events: S3EventRepository; readonly logger: Logger }) => readonly WebhookIntegration[]
+export interface IntegrationDeps {
+  readonly events: S3EventRepository
+  readonly logger: Logger
+  readonly config: IngestConfig
+}
+
+export type IntegrationFactory = (deps: IntegrationDeps) => readonly WebhookIntegration[]
 
 export const noIntegrations: IntegrationFactory = () => []
 
@@ -41,7 +47,10 @@ export const createIngestApp = (env: Environment, integrations: IntegrationFacto
   const logger = createIngestLogger({ level: config.right.logLevel, env: config.right.env })
   const events = new S3EventRepository(createS3Client(config.right.region), config.right.eventBucketName)
   logger.info("webhook ingest starting", { bucket: config.right.eventBucketName, region: config.right.region })
-  return { handler: createIngestHandler({ registry: createRegistry(integrations({ events, logger })), logger }), logger }
+  return {
+    handler: createIngestHandler({ registry: createRegistry(integrations({ events, logger, config: config.right })), logger }),
+    logger
+  }
 }
 
 const misconfiguredApp = (reason: string): IngestApp => {

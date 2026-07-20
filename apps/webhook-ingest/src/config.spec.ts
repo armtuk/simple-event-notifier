@@ -2,28 +2,55 @@ import { Either } from "effect"
 import { describe, expect, it } from "vitest"
 import { parseIngestConfig } from "./config.ts"
 
-const complete = { EVENT_BUCKET_NAME: "events.prod.personal-events.fifthdimensionengineering.com", AWS_REGION: "us-east-1" }
+const complete = {
+  EVENT_BUCKET_NAME: "events.prod.personal-events.fifthdimensionengineering.com",
+  STATE_BUCKET_NAME: "state.prod.personal-events.fifthdimensionengineering.com",
+  AWS_REGION: "us-east-1"
+}
 
 describe("parseIngestConfig", () => {
   it("reads the bucket and region the Lambda runtime supplies", () => {
     expect(Either.getOrThrow(parseIngestConfig(complete))).toStrictEqual({
       eventBucketName: complete.EVENT_BUCKET_NAME,
+      stateBucketName: complete.STATE_BUCKET_NAME,
+      githubWebhookSecretParam: "/personal-events/github/webhook-secret",
+      githubDeliveryPrefix: "deliveries/github",
       region: "us-east-1",
       logLevel: "info",
       env: "prod"
     })
   })
 
-  it("refuses to start without a bucket, rather than accepting deliveries it would lose", () => {
-    const failure = Either.getOrThrow(Either.flip(parseIngestConfig({ AWS_REGION: "us-east-1" })))
+  it("refuses to start without an event bucket, rather than accepting deliveries it would lose", () => {
+    const failure = Either.getOrThrow(Either.flip(parseIngestConfig({ ...complete, EVENT_BUCKET_NAME: undefined })))
     expect(failure).toContain("eventBucketName")
+  })
+
+  it("refuses to start without a state bucket, because dedupe markers must not live in the event bucket", () => {
+    const failure = Either.getOrThrow(Either.flip(parseIngestConfig({ ...complete, STATE_BUCKET_NAME: undefined })))
+    expect(failure).toContain("stateBucketName")
+  })
+
+  it("keeps the two buckets separate — an operator pointing both at the event bucket is their own choice, not a default", () => {
+    const config = Either.getOrThrow(parseIngestConfig(complete))
+    expect(config.stateBucketName).not.toBe(config.eventBucketName)
+  })
+
+  it("defaults the GitHub secret parameter and delivery prefix, and lets the environment override them", () => {
+    const overridden = Either.getOrThrow(
+      parseIngestConfig({ ...complete, GITHUB_WEBHOOK_SECRET_PARAM: "/other/secret", GITHUB_DELIVERY_PREFIX: "d/gh" })
+    )
+    expect(overridden).toMatchObject({ githubWebhookSecretParam: "/other/secret", githubDeliveryPrefix: "d/gh" })
   })
 
   it("falls back to AWS_DEFAULT_REGION, then to the documented default", () => {
     expect(Either.getOrThrow(parseIngestConfig({ ...complete, AWS_REGION: undefined, AWS_DEFAULT_REGION: "eu-west-2" })).region).toBe(
       "eu-west-2"
     )
-    expect(Either.getOrThrow(parseIngestConfig({ EVENT_BUCKET_NAME: complete.EVENT_BUCKET_NAME })).region).toBe("us-east-1")
+    expect(
+      Either.getOrThrow(parseIngestConfig({ EVENT_BUCKET_NAME: complete.EVENT_BUCKET_NAME, STATE_BUCKET_NAME: complete.STATE_BUCKET_NAME }))
+        .region
+    ).toBe("us-east-1")
   })
 
   it.for([["local"], ["dev"], ["qa"], ["staging"], ["prod"]])("accepts the project environment %s", ([env]) => {
@@ -42,6 +69,7 @@ describe("parseIngestConfig", () => {
   it("reports every configuration problem at once", () => {
     const failure = Either.getOrThrow(Either.flip(parseIngestConfig({ ENV: "production", LOG_LEVEL: "loud" })))
     expect(failure).toContain("eventBucketName")
+    expect(failure).toContain("stateBucketName")
     expect(failure).toContain("env")
     expect(failure).toContain("logLevel")
   })

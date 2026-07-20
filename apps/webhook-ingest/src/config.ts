@@ -19,10 +19,26 @@ export const logLevels = { error: "error", warn: "warn", info: "info", debug: "d
 
 export type LogLevel = (typeof logLevels)[keyof typeof logLevels]
 
-export const ingestConfigDefaults = { region: "us-east-1", logLevel: logLevels.info, env: deploymentEnvs.prod } as const
+export const ingestConfigDefaults = {
+  region: "us-east-1",
+  logLevel: logLevels.info,
+  env: deploymentEnvs.prod,
+  githubWebhookSecretParam: "/personal-events/github/webhook-secret",
+  githubDeliveryPrefix: "deliveries/github"
+} as const
 
 const IngestConfigSchema = /*#__PURE__*/ Schema.Struct({
   eventBucketName: Schema.NonEmptyString,
+  /**
+   * Operational state — delivery-dedupe markers now, poller cursors later — lives in a **separate
+   * bucket** from the events. It is not tidiness: `apps/desktop-notifier/src/poller.ts` lists the
+   * event bucket with no prefix filter and advances its high-water mark to the highest key it saw,
+   * and `"deliveries/…"` sorts above every `"2026-…"` event key. One marker in the event bucket
+   * would push a consumer's mark past every event that will ever exist.
+   */
+  stateBucketName: Schema.NonEmptyString,
+  githubWebhookSecretParam: Schema.NonEmptyString,
+  githubDeliveryPrefix: Schema.NonEmptyString,
   region: Schema.NonEmptyString,
   logLevel: Schema.Literal(logLevels.error, logLevels.warn, logLevels.info, logLevels.debug),
   env: Schema.Literal(deploymentEnvs.local, deploymentEnvs.dev, deploymentEnvs.qa, deploymentEnvs.staging, deploymentEnvs.prod)
@@ -46,6 +62,9 @@ export const parseIngestConfig = (env: Environment): Either.Either<IngestConfig,
 const toConfigFields = (env: Environment): Record<string, unknown> =>
   omitUndefined({
     eventBucketName: env.EVENT_BUCKET_NAME,
+    stateBucketName: env.STATE_BUCKET_NAME,
+    githubWebhookSecretParam: env.GITHUB_WEBHOOK_SECRET_PARAM ?? ingestConfigDefaults.githubWebhookSecretParam,
+    githubDeliveryPrefix: env.GITHUB_DELIVERY_PREFIX ?? ingestConfigDefaults.githubDeliveryPrefix,
     region: env.AWS_REGION ?? env.AWS_DEFAULT_REGION ?? ingestConfigDefaults.region,
     logLevel: env.LOG_LEVEL ?? ingestConfigDefaults.logLevel,
     env: env.ENV ?? ingestConfigDefaults.env

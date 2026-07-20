@@ -33,8 +33,12 @@ resource "aws_lambda_function" "webhook_ingest" {
   environment {
     variables = {
       EVENT_BUCKET_NAME = module.event_log.name
-      ENV               = var.env
-      LOG_LEVEL         = var.lambda_log_level
+      # A different bucket from the events, deliberately — see state-bucket.tf.
+      STATE_BUCKET_NAME           = module.operational_state.name
+      GITHUB_WEBHOOK_SECRET_PARAM = aws_ssm_parameter.github_webhook_secret.name
+      GITHUB_DELIVERY_PREFIX      = var.github_delivery_prefix
+      ENV                         = var.env
+      LOG_LEVEL                   = var.lambda_log_level
       # The bundle ships sourcemaps; without this they are inert and every stack trace points at a
       # single-line bundle.
       NODE_OPTIONS = "--enable-source-maps"

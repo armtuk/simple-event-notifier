@@ -47,3 +47,23 @@ output "ingest_api_endpoint" {
   description = "The API's generated execute-api endpoint. Useful for diagnosing a DNS or certificate problem by bypassing the custom domain; not a stable URL."
   value       = aws_apigatewayv2_api.ingest.api_endpoint
 }
+
+output "state_bucket_name" {
+  description = "Operational-state bucket: delivery-dedupe markers and (from AWE-157) poller cursors. Deliberately NOT the event bucket."
+  value       = module.operational_state.name
+}
+
+output "state_bucket_arn" {
+  description = "ARN of the operational-state bucket, for IAM policies granting producers access to their own prefixes."
+  value       = module.operational_state.arn
+}
+
+output "github_webhook_secret_parameter" {
+  description = "SSM parameter the ingest reads the GitHub HMAC secret from. Set its value out of band; Terraform only creates the placeholder."
+  value       = aws_ssm_parameter.github_webhook_secret.name
+}
+
+output "github_webhook_url" {
+  description = "The exact Payload URL to paste into a GitHub webhook's settings."
+  value       = "https://${local.ingest_domain}/github"
+}

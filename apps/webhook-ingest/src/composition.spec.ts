@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest"
 import { createIngestApp } from "./composition.ts"
 import { proxyEvent, stubIntegration } from "./testing/stub-integration.ts"
 
-const complete = { EVENT_BUCKET_NAME: "events.prod.personal-events.fifthdimensionengineering.com", AWS_REGION: "us-east-1" }
+const complete = {
+  EVENT_BUCKET_NAME: "events.prod.personal-events.fifthdimensionengineering.com",
+  STATE_BUCKET_NAME: "state.prod.personal-events.fifthdimensionengineering.com",
+  AWS_REGION: "us-east-1"
+}
 
 describe("createIngestApp", () => {
   it("builds a handler that 404s every POST while the registry is empty — this story's shipped state", async () => {

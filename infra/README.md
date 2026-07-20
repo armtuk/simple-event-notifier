@@ -7,7 +7,7 @@ for why it is shaped this way.
 | Module | Kind | State | Creates | Applied |
 | :--- | :--- | :--- | :--- | :--- |
 | `bootstrap/` | root | local, then migrated into the bucket it creates | the Terraform remote-state bucket | once, by hand |
-| `personal-events/` | root | remote (S3 + `use_lockfile`) | the S3 event bucket, the delegated hosted zone, the `NS` delegation in the parent zone, and the webhook ingest (Lambda + HTTP API + `hooks.` hostname) | on every change |
+| `personal-events/` | root | remote (S3 + `use_lockfile`) | the S3 event bucket, the operational-state bucket, the delegated hosted zone, the `NS` delegation in the parent zone, and the webhook ingest (Lambda + HTTP API + `hooks.` hostname + the GitHub secret) | on every change |
 | `modules/hardened-bucket/` | shared | — | the bucket hardening both roots need: ACLs off, public access blocked four ways, versioned, SSE-S3, incomplete uploads reaped | called, never applied directly |
 
 `modules/hardened-bucket/` exists so "how we harden an S3 bucket" changes in one place. Only the
@@ -15,13 +15,28 @@ retention and tiering rules genuinely differ between the two buckets, and those 
 The bootstrap module uses it too: its bootstrapping constraint is about *Terraform state*, not
 module resolution — a local module directory is just files on disk.
 
+## Two buckets, and why they must stay two
+
+The **event bucket** is the permanent log. The **operational-state bucket** holds delivery-dedupe
+markers and (from AWE-157) poller cursors, and expires them.
+
+They are separate buckets rather than separate prefixes for a hard correctness reason.
+`apps/desktop-notifier/src/poller.ts` lists the event bucket with `ListObjectsV2` `StartAfter` and
+**no prefix filter**, then advances its high-water mark to the highest key it saw. Event keys lead
+with a year (`2026-…`); `deliveries/…` and `state/…` start with a letter, which sorts **above** every
+digit. One marker object in the event bucket would push a consumer's mark above every event key that
+will ever exist, and that consumer would silently never receive another event.
+
+Do not "simplify" this by folding the state bucket into a prefix of the event bucket.
+
 ## Naming
 
 Everything follows `{usage}.{env}.{system}.{domain}` from `.agents/guidance/aws.md`:
 
 - system domain — `personal-events.fifthdimensionengineering.com`
 - event bucket — `events.prod.personal-events.fifthdimensionengineering.com`
-- state bucket — `tfstate.prod.personal-events.fifthdimensionengineering.com`
+- state bucket (Terraform) — `tfstate.prod.personal-events.fifthdimensionengineering.com`
+- operational-state bucket — `state.prod.personal-events.fifthdimensionengineering.com`
 - webhook ingest — `hooks.personal-events.fifthdimensionengineering.com`
 
 The ingest hostname omits the `{env}` label that the bucket names carry. This is a single-environment
@@ -80,20 +95,35 @@ terraform -chdir=personal-events plan     # review
 terraform -chdir=personal-events apply
 ```
 
+### Set the GitHub webhook secret (out of band)
+
+Terraform creates the SSM parameter with a **placeholder** and `ignore_changes = [value]`, so the
+real secret never enters state and a later `apply` will not revert it:
+
+```bash
+aws ssm put-parameter \
+  --name "$(terraform -chdir=personal-events output -raw github_webhook_secret_parameter)" \
+  --type SecureString --value "$(openssl rand -hex 32)" --overwrite
+```
+
+The same value goes into the GitHub webhook's *Secret* field — see
+`apps/webhook-ingest/src/integrations/github/setup.md` for the whole operator runbook.
+
 ### Verify the ingest
 
 ```bash
 INGEST=$(terraform -chdir=personal-events output -raw ingest_url)
 
-curl -sS -o /dev/null -w '%{http_code}\n' -XPOST "$INGEST/github" -d '{}'   # => 404 until AWE-156
+curl -sS -o /dev/null -w '%{http_code}\n' -XPOST "$INGEST/github" -d '{}'   # => 401, unsigned
 curl -sS -o /dev/null -w '%{http_code}\n' -XPOST "$INGEST/nope"   -d '{}'   # => 404, unroutable
 
 aws logs tail "/aws/lambda/$(terraform -chdir=personal-events output -raw ingest_function_name)" --since 5m
 ```
 
-A 404 from an unroutable path is the **correct** answer for this stage: the function ships with an
-empty integration registry, and GitHub registers itself into it in AWE-156. A `403` instead means
-the request never reached the function — check the custom domain mapping and the certificate.
+A **401** from `/github` is the correct answer to an unsigned request: the route exists, and the
+signature check rejected it. A **404** means the GitHub integration failed to register — check the
+log for `github integration disabled`. A **403** means the request never reached the function at all
+— check the custom domain mapping and the certificate.
 
 ### Verify the apply
 

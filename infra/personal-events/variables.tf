@@ -111,3 +111,42 @@ variable "ingest_throttle_rate" {
     error_message = "ingest_throttle_rate must be greater than zero."
   }
 }
+
+variable "state_bucket_name" {
+  description = "Override for the operational-state bucket name. Leave null to derive it as state.{env}.{system_domain}. It MUST NOT be the event bucket — see state-bucket.tf for why a marker in the event bucket strands every consumer."
+  type        = string
+  default     = null
+}
+
+variable "github_webhook_secret_parameter" {
+  description = "SSM parameter holding the shared HMAC secret for GitHub webhook deliveries. Terraform creates it with a placeholder; the real value is set out of band so it never enters state."
+  type        = string
+  default     = "/personal-events/github/webhook-secret"
+
+  validation {
+    condition     = startswith(var.github_webhook_secret_parameter, "/")
+    error_message = "github_webhook_secret_parameter must be an absolute SSM parameter path beginning with /."
+  }
+}
+
+variable "github_delivery_prefix" {
+  description = "Key prefix for GitHub delivery-dedupe markers within the operational-state bucket."
+  type        = string
+  default     = "deliveries/github"
+
+  validation {
+    condition     = length(var.github_delivery_prefix) > 0 && !startswith(var.github_delivery_prefix, "/") && !endswith(var.github_delivery_prefix, "/")
+    error_message = "github_delivery_prefix must be a non-empty key prefix with no leading or trailing slash."
+  }
+}
+
+variable "delivery_marker_retention_days" {
+  description = "How long a delivery-dedupe marker is kept. Must exceed GitHub's three-day manual-redelivery window, or a redelivery on day four would write a duplicate event."
+  type        = number
+  default     = 7
+
+  validation {
+    condition     = var.delivery_marker_retention_days > 3
+    error_message = "delivery_marker_retention_days must be greater than 3: GitHub allows manual redelivery for three days, and a marker that expires first would let a redelivery write a duplicate event."
+  }
+}

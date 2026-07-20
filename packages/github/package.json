@@ -11,6 +11,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./testing": {
+      "types": "./dist/testing/exemplars.d.ts",
+      "default": "./dist/testing/exemplars.js"
+    },
     "./exemplars/*": "./exemplars/*"
   },
   "files": ["dist", "exemplars"],

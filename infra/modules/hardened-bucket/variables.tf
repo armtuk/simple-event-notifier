@@ -65,3 +65,28 @@ variable "abort_incomplete_upload_days" {
     error_message = "abort_incomplete_upload_days must be greater than 0."
   }
 }
+
+variable "prefix_expirations" {
+  description = "Expiry rules for individual key prefixes. Distinct from the never-expire policy on current versions: a caller that wants data to age out must say which prefix, and for how long."
+  type = list(object({
+    id     = string
+    prefix = string
+    days   = number
+  }))
+  default = []
+
+  validation {
+    condition     = alltrue([for e in var.prefix_expirations : e.days > 0])
+    error_message = "every prefix expiration's days must be greater than 0."
+  }
+
+  validation {
+    condition     = alltrue([for e in var.prefix_expirations : length(e.prefix) > 0])
+    error_message = "every prefix expiration must name a non-empty prefix; an empty prefix would expire the whole bucket."
+  }
+
+  validation {
+    condition     = length(distinct([for e in var.prefix_expirations : e.id])) == length(var.prefix_expirations)
+    error_message = "every prefix expiration needs a unique id; S3 rejects a lifecycle configuration with duplicate rule ids."
+  }
+}

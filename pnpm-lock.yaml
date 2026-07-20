@@ -9,6 +9,9 @@ catalogs:
     '@aws-sdk/client-s3':
       specifier: ^3.1090.0
       version: 3.1090.0
+    '@aws-sdk/client-ssm':
+      specifier: ^3.1090.0
+      version: 3.1090.0
     '@aws-sdk/credential-providers':
       specifier: ^3.1090.0
       version: 3.1090.0
@@ -18,6 +21,9 @@ catalogs:
     '@octokit/openapi-webhooks-types':
       specifier: ^12.1.0
       version: 12.1.0
+    '@octokit/webhooks-methods':
+      specifier: ^6.0.0
+      version: 6.0.0
     '@types/aws-lambda':
       specifier: ^8.10.162
       version: 8.10.162
@@ -108,15 +114,24 @@ importers:
       '@aws-sdk/client-s3':
         specifier: 'catalog:'
         version: 3.1090.0
+      '@aws-sdk/client-ssm':
+        specifier: 'catalog:'
+        version: 3.1090.0
       '@aws-sdk/credential-providers':
         specifier: 'catalog:'
         version: 3.1090.0
+      '@octokit/webhooks-methods':
+        specifier: 'catalog:'
+        version: 6.0.0
       '@personal-events/event-model':
         specifier: workspace:*
         version: link:../../packages/event-model
       '@personal-events/event-sink':
         specifier: workspace:*
         version: link:../../packages/event-sink
+      '@personal-events/github':
+        specifier: workspace:*
+        version: link:../../packages/github
       '@personal-events/integration-core':
         specifier: workspace:*
         version: link:../../packages/integration-core
@@ -269,6 +284,10 @@ packages:
 
   '@aws-sdk/client-s3@3.1090.0':
     resolution: {integrity: sha512-R6GX9cd1jljwzZ8xFmgAI/hHCuX1MobIKBdsymv7WL9SENvO9Vgz9KOR6avTnu0Ao+w1LmxnTe+jqmZXEn7Q/Q==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/client-ssm@3.1090.0':
+    resolution: {integrity: sha512-8nYV/qnr+lr+xcsLBzx4iFWsl1zIT8Uf9uS2xevpfuFM0BT6IIIisAuxrotr7Rng3YgqDRx78JZKNp87iR+7uA==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/core@3.975.3':
@@ -589,6 +608,10 @@ packages:
 
   '@octokit/openapi-webhooks-types@12.1.0':
     resolution: {integrity: sha512-WiuzhOsiOvb7W3Pvmhf8d2C6qaLHXrWiLBP4nJ/4kydu+wpagV5Fkz9RfQwV2afYzv3PB+3xYgp4mAdNGjDprA==}
+
+  '@octokit/webhooks-methods@6.0.0':
+    resolution: {integrity: sha512-MFlzzoDJVw/GcbfzVC1RLR36QqkTLUf79vLVO3D+xn7r0QgxnFoLZgtrzxiQErAjFUOdH6fas2KeQJ1yr/qaXQ==}
+    engines: {node: '>= 20'}
 
   '@oxc-project/types@0.139.0':
     resolution: {integrity: sha512-r9gHphtCs+1M7J0pw6Sn/hh/Wpa/iQrOOkrNAlVLF/gHq+/CJmHIWKKUUhdWjcD6CIa8idarspCsASiXCXvFUw==}
@@ -1504,6 +1527,17 @@ snapshots:
       '@smithy/types': 4.16.1
       tslib: 2.8.1
 
+  '@aws-sdk/client-ssm@3.1090.0':
+    dependencies:
+      '@aws-sdk/core': 3.975.3
+      '@aws-sdk/credential-provider-node': 3.972.70
+      '@aws-sdk/types': 3.974.2
+      '@smithy/core': 3.29.5
+      '@smithy/fetch-http-handler': 5.6.7
+      '@smithy/node-http-handler': 4.9.7
+      '@smithy/types': 4.16.1
+      tslib: 2.8.1
+
   '@aws-sdk/core@3.975.3':
     dependencies:
       '@aws-sdk/types': 3.974.2
@@ -1833,6 +1867,8 @@ snapshots:
     optional: true
 
   '@octokit/openapi-webhooks-types@12.1.0': {}
+
+  '@octokit/webhooks-methods@6.0.0': {}
 
   '@oxc-project/types@0.139.0': {}
 

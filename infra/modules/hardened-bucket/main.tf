@@ -83,6 +83,25 @@ resource "aws_s3_bucket_lifecycle_configuration" "this" {
     }
   }
 
+  # Prefix-scoped expiry, for operational data that is genuinely transient -- delivery-dedupe
+  # markers, poller cursors. Never for events: the bucket holding those is the permanent record.
+  dynamic "rule" {
+    for_each = var.prefix_expirations
+
+    content {
+      id     = rule.value.id
+      status = "Enabled"
+
+      filter {
+        prefix = rule.value.prefix
+      }
+
+      expiration {
+        days = rule.value.days
+      }
+    }
+  }
+
   rule {
     id     = "abort-incomplete-uploads"
     status = "Enabled"
