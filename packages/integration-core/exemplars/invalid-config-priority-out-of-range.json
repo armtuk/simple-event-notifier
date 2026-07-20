@@ -1,0 +1,10 @@
+{
+  "integration": "example",
+  "rules": [
+    {
+      "trigger": { "channel": "webhook", "event": "thing_happened" },
+      "output": { "eventType": "notification", "priority": 9, "name": "thing-happened" }
+    }
+  ],
+  "default": { "eventType": "notification", "priority": 3 }
+}

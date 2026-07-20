@@ -1,0 +1,14 @@
+{
+  "integration": "example",
+  "rules": [
+    {
+      "trigger": { "channel": "webhook", "event": "incident", "action": "raised" },
+      "output": { "eventType": "alert", "priority": 1, "name": "incident-raised", "secondaryProcessing": ["open-ticket", "page-oncall"] }
+    },
+    {
+      "trigger": { "channel": "notification", "reason": "mention" },
+      "output": { "eventType": "notification", "priority": 4, "name": "mention", "secondaryProcessing": [] }
+    }
+  ],
+  "default": { "eventType": "notification", "priority": 3, "secondaryProcessing": ["open-ticket"] }
+}

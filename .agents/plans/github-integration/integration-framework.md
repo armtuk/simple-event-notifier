@@ -2,12 +2,12 @@
 id: AWE-153
 title: Reusable integration template (integration-core)
 type: story
-status: Pending
+status: Completed
 parent: ./feature.md
 branch: github-integration
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-28
-updated: 2026-06-29
+updated: 2026-07-19
 ---
 
 # Story: Reusable integration template (integration-core)
@@ -333,3 +333,56 @@ Execute in order, top to bottom.
 - Level 2 — Types: `pnpm --filter @personal-events/integration-core typecheck`
 - Level 3 — Unit tests: `pnpm --filter @personal-events/integration-core test`
 - Level 4 — Whole-graph: `pnpm build && pnpm lint && pnpm test` (green from the repo root)
+
+## Plan refresh (2026-07-19) — what changed between planning and execution
+
+This story was planned 2026-06-28/29 against an **empty repo**. `bootstrap-and-iac` has since landed.
+The corrections below were applied before implementing; the design decisions in the Notes and Plan
+above are otherwise unchanged.
+
+| Planned assumption | Reality | Action |
+| :--- | :--- | :--- |
+| "nothing under `packages/` exists yet" | `packages/event-model` and `apps/desktop-notifier` exist and are green | Mirrored their real skeletons rather than the planned ones |
+| `parseEvent` returns `Either<Event, string>` | it returns `Either<Event, EventModelError>` (a tagged object with `reason` + `message`) | `TransformError.reason` carries `failure.message` |
+| field schemas "may not be exported yet" from `event-model` — flagged as a possible forward-dependency | `Priority`, `NoDotString`, `IsoInstant`, `EventTypeSchema`, `schemaVersions` **are** all exported | Imported directly. **No change to `event-model` was needed or made** — the contract is untouched |
+| `effect@^3.21`, `@effect/schema` deprecated | the workspace catalog pins `effect@^3.22.0` | Used the catalog (`"effect": "catalog:"`), never a literal range |
+| `.agents/frameworks/effect/v3/_main/schema.md` is the API reference | `.agents/cache/effect/**` does not exist in this repo | Verified every call against `node_modules/effect` typings, as Level 0 did |
+| `tsup … dts: true` + `composite: true` in tsconfig | the real per-package `tsconfig.json` is `noEmit: true` with no `composite` — tsc is the type checker only, tsup owns emit (`CLAUDE.md` § TypeScript conventions) | Followed the repo convention: `noEmit: true`, `dts: true` in tsup. Downstream packages consume `dist/index.d.ts` and do so successfully |
+| relative imports need `allowImportingTsExtensions` | the repo uses `rewriteRelativeImportExtensions` (a documented carve-out) | `.ts` extensions used; no tsconfig change |
+| `matchKey` snippet had a corrupted separator byte | — | Key separator is `:`, giving `` `${channel}:${fields}` `` |
+
+### Design decisions taken during implementation (beyond the plan)
+
+- **`classify` was extracted from `transform` into its own module.** The plan had `transform` do the
+  lookup inline and return `Either<Event, TransformError>`. AWE-156 needs to log a `warn` when a
+  delivery classified to the fallback (an unmapped event is a config gap the operator should see,
+  and emphatically *not* an error). Deriving that at the edge by comparing the resulting output to
+  `fallback` would be wrong — two distinct triggers may legitimately map to the same `Output`, so
+  value-equality is a false signal. `classify(compiled, trigger) → { output, matchKey, matched }`
+  answers it directly. `transform`'s signature is unchanged.
+- **`CompiledConfig` carries `ruleCount`.** Duplicate trigger keys resolve last-wins (ordinary
+  `new Map(entries)` semantics, asserted in `compile.spec.ts`). `ruleCount` vs `lookup.size` is what
+  makes that collapse observable rather than silent.
+- **`NormalizedEvent` gained an optional `workItem`.** The canonical `Event` has one and a normalizer
+  is the only thing that can know a provider's ticket link; without it the field would be
+  unreachable for every integration. It is `exact` optional, and `transform` omits the key entirely
+  when absent (`exactOptionalPropertyTypes` is on).
+- **`SourceAdapter` gained a `channel` field and a `Failure` type parameter.** An adapter's channel
+  is fixed by construction (a webhook adapter only ever emits `channel: "webhook"`), and a provider's
+  failure type is its own — `unknown` on the left would have forced every consumer to re-narrow.
+- **`TransformError` carries `integration` + `matchKey`** as well as `reason`, per
+  `.agents/guidance/logging.md`: a failure line must name the offending value, and "which rule was
+  sought" is that value here.
+- **`loadMappingConfig` checks the `default`'s `secondaryProcessing` too**, not only the rules'.
+
+### Validation actually run
+
+| Level | Command | Result |
+| :--- | :--- | :--- |
+| 1 — style | `pnpm --filter @personal-events/integration-core lint` | clean |
+| 2 — types | `pnpm --filter @personal-events/integration-core typecheck` | clean |
+| 3 — specs | `pnpm --filter @personal-events/integration-core test` | 64 passed, 7 files |
+| 4 — graph | root `pnpm build && lint && test && typecheck --force` | green (see the feature-level summary) |
+
+Every acceptance criterion of this story was verified in code. **Nothing here is deferred** — this
+package is pure, so the side-effect fence does not touch it.

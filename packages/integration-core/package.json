@@ -1,0 +1,34 @@
+{
+  "name": "@personal-events/integration-core",
+  "version": "0.0.1",
+  "description": "The reusable integration template: mapping-config schema, pure transform, and adapter interfaces",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./exemplars/*": "./exemplars/*"
+  },
+  "files": ["dist", "exemplars"],
+  "scripts": {
+    "build": "tsup",
+    "lint": "biome check src/",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@personal-events/event-model": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "catalog:",
+    "@types/node": "catalog:",
+    "tsup": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
