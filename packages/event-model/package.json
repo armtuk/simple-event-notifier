@@ -1,20 +1,26 @@
 {
-  "name": "@personal-events/placeholder",
+  "name": "@personal-events/event-model",
   "version": "0.0.1",
-  "description": "Temporary workspace member that makes the build/lint/test pipeline real. Removed by AWE-150.",
+  "description": "The canonical personal-events event schema and S3 object-key codec",
   "private": true,
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }
   },
+  "files": ["dist"],
   "scripts": {
     "build": "tsup",
     "lint": "biome check src/",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "effect": "catalog:"
   },
   "devDependencies": {
     "@biomejs/biome": "catalog:",
