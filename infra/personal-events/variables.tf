@@ -5,13 +5,13 @@ variable "region" {
 }
 
 variable "env" {
-  description = "Deployment environment. Forms the second label of the resource naming scheme, {usage}.{env}.{system}.{domain}."
+  description = "Deployment environment. Forms the second label of the resource naming scheme, {usage}.{env}.{system}.{domain}. Same closed set as the bootstrap root and the TypeScript daemon — see CLAUDE.md."
   type        = string
   default     = "prod"
 
   validation {
-    condition     = contains(["prod", "dev", "staging", "qa", "local"], var.env)
-    error_message = "env must be one of prod, dev, staging, qa, local."
+    condition     = contains(["local", "dev", "qa", "staging", "prod"], var.env)
+    error_message = "env must be one of local, dev, qa, staging, prod."
   }
 }
 

@@ -5,9 +5,14 @@ variable "region" {
 }
 
 variable "env" {
-  description = "Deployment environment, forming the second label of the {usage}.{env}.{system}.{domain} naming scheme."
+  description = "Deployment environment, forming the second label of the {usage}.{env}.{system}.{domain} naming scheme. Same closed set as the personal-events root and the TypeScript daemon — see CLAUDE.md."
   type        = string
   default     = "prod"
+
+  validation {
+    condition     = contains(["local", "dev", "qa", "staging", "prod"], var.env)
+    error_message = "env must be one of local, dev, qa, staging, prod."
+  }
 }
 
 variable "system_domain" {
