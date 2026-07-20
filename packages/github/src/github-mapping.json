@@ -2,69 +2,276 @@
   "integration": "github",
   "rules": [
     {
-      "trigger": { "channel": "webhook", "event": "pull_request", "action": "opened" },
-      "output": { "eventType": "notification", "priority": 5, "name": "new-pull-request" }
+      "trigger": {
+        "channel": "webhook",
+        "event": "pull_request",
+        "action": "opened"
+      },
+      "output": {
+        "eventType": "notification",
+        "priority": 5,
+        "name": "new-pull-request"
+      }
     },
     {
-      "trigger": { "channel": "webhook", "event": "pull_request", "action": "review_requested" },
-      "output": { "eventType": "alert", "priority": 4, "name": "review-requested" }
+      "trigger": {
+        "channel": "webhook",
+        "event": "pull_request",
+        "action": "review_requested"
+      },
+      "output": {
+        "eventType": "alert",
+        "priority": 4,
+        "name": "review-requested"
+      }
     },
     {
-      "trigger": { "channel": "webhook", "event": "pull_request", "action": "ready_for_review" },
-      "output": { "eventType": "alert", "priority": 5, "name": "pull-request-ready-for-review" }
+      "trigger": {
+        "channel": "webhook",
+        "event": "pull_request",
+        "action": "ready_for_review"
+      },
+      "output": {
+        "eventType": "alert",
+        "priority": 5,
+        "name": "pull-request-ready-for-review"
+      }
     },
     {
-      "trigger": { "channel": "webhook", "event": "pull_request", "action": "closed" },
-      "output": { "eventType": "notification", "priority": 6, "name": "pull-request-closed" }
+      "trigger": {
+        "channel": "webhook",
+        "event": "pull_request",
+        "action": "closed"
+      },
+      "output": {
+        "eventType": "notification",
+        "priority": 6,
+        "name": "pull-request-closed"
+      }
     },
     {
-      "trigger": { "channel": "webhook", "event": "pull_request_review", "action": "submitted" },
-      "output": { "eventType": "alert", "priority": 5, "name": "pull-request-review-submitted" }
+      "trigger": {
+        "channel": "webhook",
+        "event": "pull_request_review",
+        "action": "submitted"
+      },
+      "output": {
+        "eventType": "alert",
+        "priority": 5,
+        "name": "pull-request-review-submitted"
+      }
     },
     {
-      "trigger": { "channel": "webhook", "event": "issues", "action": "opened" },
-      "output": { "eventType": "notification", "priority": 5, "name": "new-issue" }
+      "trigger": {
+        "channel": "webhook",
+        "event": "issues",
+        "action": "opened"
+      },
+      "output": {
+        "eventType": "notification",
+        "priority": 5,
+        "name": "new-issue"
+      }
     },
     {
-      "trigger": { "channel": "webhook", "event": "issues", "action": "assigned" },
-      "output": { "eventType": "alert", "priority": 4, "name": "issue-assigned" }
+      "trigger": {
+        "channel": "webhook",
+        "event": "issues",
+        "action": "assigned"
+      },
+      "output": {
+        "eventType": "alert",
+        "priority": 4,
+        "name": "issue-assigned"
+      }
     },
     {
-      "trigger": { "channel": "webhook", "event": "issues", "action": "closed" },
-      "output": { "eventType": "notification", "priority": 6, "name": "issue-closed" }
+      "trigger": {
+        "channel": "webhook",
+        "event": "issues",
+        "action": "closed"
+      },
+      "output": {
+        "eventType": "notification",
+        "priority": 6,
+        "name": "issue-closed"
+      }
     },
     {
-      "trigger": { "channel": "webhook", "event": "push" },
-      "output": { "eventType": "notification", "priority": 7, "name": "push" }
+      "trigger": {
+        "channel": "webhook",
+        "event": "push"
+      },
+      "output": {
+        "eventType": "notification",
+        "priority": 7,
+        "name": "push"
+      }
     },
     {
-      "trigger": { "channel": "webhook", "event": "release", "action": "published" },
-      "output": { "eventType": "notification", "priority": 5, "name": "new-release" }
+      "trigger": {
+        "channel": "webhook",
+        "event": "release",
+        "action": "published"
+      },
+      "output": {
+        "eventType": "notification",
+        "priority": 5,
+        "name": "new-release"
+      }
     },
     {
-      "trigger": { "channel": "notification", "reason": "review_requested" },
-      "output": { "eventType": "alert", "priority": 4, "name": "review-requested" }
+      "trigger": {
+        "channel": "notification",
+        "reason": "review_requested"
+      },
+      "output": {
+        "eventType": "alert",
+        "priority": 4,
+        "name": "review-requested"
+      }
     },
     {
-      "trigger": { "channel": "notification", "reason": "mention" },
-      "output": { "eventType": "alert", "priority": 4, "name": "mention" }
+      "trigger": {
+        "channel": "notification",
+        "reason": "mention"
+      },
+      "output": {
+        "eventType": "alert",
+        "priority": 4,
+        "name": "mention"
+      }
     },
     {
-      "trigger": { "channel": "notification", "reason": "team_mention" },
-      "output": { "eventType": "notification", "priority": 5, "name": "team-mention" }
+      "trigger": {
+        "channel": "notification",
+        "reason": "team_mention"
+      },
+      "output": {
+        "eventType": "notification",
+        "priority": 5,
+        "name": "team-mention"
+      }
     },
     {
-      "trigger": { "channel": "notification", "reason": "assign" },
-      "output": { "eventType": "alert", "priority": 4, "name": "assigned" }
+      "trigger": {
+        "channel": "notification",
+        "reason": "assign"
+      },
+      "output": {
+        "eventType": "alert",
+        "priority": 4,
+        "name": "assigned"
+      }
     },
     {
-      "trigger": { "channel": "notification", "reason": "ci_activity" },
-      "output": { "eventType": "notification", "priority": 6, "name": "ci-activity" }
+      "trigger": {
+        "channel": "notification",
+        "reason": "ci_activity"
+      },
+      "output": {
+        "eventType": "notification",
+        "priority": 6,
+        "name": "ci-activity"
+      }
     },
     {
-      "trigger": { "channel": "notification", "reason": "security_alert" },
-      "output": { "eventType": "alert", "priority": 2, "name": "security-alert" }
+      "trigger": {
+        "channel": "notification",
+        "reason": "security_alert"
+      },
+      "output": {
+        "eventType": "alert",
+        "priority": 2,
+        "name": "security-alert"
+      }
+    },
+    {
+      "trigger": {
+        "channel": "events_api",
+        "type": "PullRequestEvent",
+        "action": "opened"
+      },
+      "output": {
+        "eventType": "notification",
+        "priority": 5,
+        "name": "new-pull-request"
+      }
+    },
+    {
+      "trigger": {
+        "channel": "events_api",
+        "type": "PullRequestEvent",
+        "action": "closed"
+      },
+      "output": {
+        "eventType": "notification",
+        "priority": 6,
+        "name": "pull-request-closed"
+      }
+    },
+    {
+      "trigger": {
+        "channel": "events_api",
+        "type": "PullRequestReviewEvent",
+        "action": "created"
+      },
+      "output": {
+        "eventType": "alert",
+        "priority": 5,
+        "name": "pull-request-review-submitted"
+      }
+    },
+    {
+      "trigger": {
+        "channel": "events_api",
+        "type": "IssuesEvent",
+        "action": "opened"
+      },
+      "output": {
+        "eventType": "notification",
+        "priority": 5,
+        "name": "new-issue"
+      }
+    },
+    {
+      "trigger": {
+        "channel": "events_api",
+        "type": "IssuesEvent",
+        "action": "closed"
+      },
+      "output": {
+        "eventType": "notification",
+        "priority": 6,
+        "name": "issue-closed"
+      }
+    },
+    {
+      "trigger": {
+        "channel": "events_api",
+        "type": "PushEvent"
+      },
+      "output": {
+        "eventType": "notification",
+        "priority": 7,
+        "name": "push"
+      }
+    },
+    {
+      "trigger": {
+        "channel": "events_api",
+        "type": "ReleaseEvent",
+        "action": "published"
+      },
+      "output": {
+        "eventType": "notification",
+        "priority": 5,
+        "name": "new-release"
+      }
     }
   ],
-  "default": { "eventType": "notification", "priority": 3 }
+  "default": {
+    "eventType": "notification",
+    "priority": 3
+  }
 }

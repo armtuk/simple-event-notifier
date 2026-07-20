@@ -3,7 +3,8 @@ import { type CompiledConfig, type NormalizedEvent, type TransformError, transfo
 import { Either, ParseResult } from "effect"
 import { toDotSafe } from "./dot-safe.ts"
 import { GithubNormalizeError } from "./errors.ts"
-import { buildNotificationTrigger, buildWebhookTrigger, githubChannels } from "./github-trigger.ts"
+import { decodeEventsApiItem, eventsApiActionOf, eventsApiWorkItemOf, type GithubEventsApiItem } from "./events-api.ts"
+import { buildEventsApiTrigger, buildNotificationTrigger, buildWebhookTrigger, githubChannels } from "./github-trigger.ts"
 import { toCanonicalInstant } from "./instant.ts"
 import { decodeNotification, type GithubNotification } from "./notification.ts"
 import { readerFor, type WebhookFacts } from "./webhook-schema-registry.ts"
@@ -56,6 +57,27 @@ export const normalizeNotification = (raw: unknown): Either.Either<NormalizedEve
   )
 
 /**
+ * The Events API path. Its item carries a real per-item `created_at`, so unlike the webhook path
+ * there is no injected clock, and unlike the notifications path the instants are genuinely distinct
+ * per item — this source does **not** collapse a batch onto one millisecond.
+ */
+export const normalizeEventsApi = (raw: unknown): Either.Either<NormalizedEvent, GithubNormalizeError> =>
+  Either.flatMap(readEventsApiItem(raw), item =>
+    Either.map(eventsApiInstant(item), timestamp => {
+      const action = eventsApiActionOf(item)
+      const workItem = eventsApiWorkItemOf(item)
+      return {
+        source: githubSource,
+        name: toDotSafe(action === undefined ? item.type : `${item.type}-${action}`),
+        timestamp,
+        trigger: buildEventsApiTrigger(item.type, action),
+        ...(workItem === undefined ? {} : { workItem }),
+        payload: asPayload(raw)
+      }
+    })
+  )
+
+/**
  * The composition an edge actually calls: normalize, then classify through the shared mapping
  * config. Curried config-first so a Lambda or a poller compiles the config once at start-up and
  * holds a per-item function.
@@ -69,6 +91,11 @@ export const githubNotificationToEvent =
   (compiled: CompiledConfig) =>
   (raw: unknown): Either.Either<Event, GithubNormalizeError | TransformError> =>
     Either.flatMap(normalizeNotification(raw), transform(compiled))
+
+export const githubEventsApiToEvent =
+  (compiled: CompiledConfig) =>
+  (raw: unknown): Either.Either<Event, GithubNormalizeError | TransformError> =>
+    Either.flatMap(normalizeEventsApi(raw), transform(compiled))
 
 /**
  * `pull_request` + `opened` → `pull_request-opened`. This is only ever the **fallback** name: a
@@ -124,6 +151,26 @@ const notificationInstant = (notification: GithubNotification): Either.Either<st
 const asPayload = (raw: unknown): Record<string, unknown> =>
   typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {}
 
+const readEventsApiItem = (raw: unknown): Either.Either<GithubEventsApiItem, GithubNormalizeError> =>
+  Either.mapLeft(
+    decodeEventsApiItem(raw),
+    error =>
+      new GithubNormalizeError({
+        channel: githubChannels.eventsApi,
+        itemId: itemIdOf(raw),
+        descriptor: "events_api",
+        reason: ParseResult.TreeFormatter.formatErrorSync(error)
+      })
+  )
+
+const eventsApiInstant = (item: GithubEventsApiItem): Either.Either<string, GithubNormalizeError> =>
+  Either.mapLeft(
+    toCanonicalInstant(item.created_at),
+    reason => new GithubNormalizeError({ channel: githubChannels.eventsApi, itemId: item.id, descriptor: item.type, reason })
+  )
+
 /** A failing notification still wants to be identified in the log line, and `id` may be all that survives. */
-const notificationIdOf = (raw: unknown): string =>
+const notificationIdOf = (raw: unknown): string => itemIdOf(raw)
+
+const itemIdOf = (raw: unknown): string =>
   typeof raw === "object" && raw !== null && "id" in raw && typeof raw.id === "string" ? raw.id : "unknown"

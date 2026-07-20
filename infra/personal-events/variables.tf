@@ -150,3 +150,14 @@ variable "delivery_marker_retention_days" {
     error_message = "delivery_marker_retention_days must be greater than 3: GitHub allows manual redelivery for three days, and a marker that expires first would let a redelivery write a duplicate event."
   }
 }
+
+variable "poller_state_key" {
+  description = "Object key in the operational-state bucket holding the GitHub poller's cursors and dedupe sets. It lives there, NOT in the event bucket — see state-bucket.tf."
+  type        = string
+  default     = "state/github-poller.json"
+
+  validation {
+    condition     = length(var.poller_state_key) > 0 && !startswith(var.poller_state_key, "/")
+    error_message = "poller_state_key must be a non-empty object key with no leading slash."
+  }
+}

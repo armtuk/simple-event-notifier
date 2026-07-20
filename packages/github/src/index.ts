@@ -1,6 +1,16 @@
 export { dotSafeReplacement, toDotSafe } from "./dot-safe.ts"
 export { GithubConfigError, GithubNormalizeError } from "./errors.ts"
 export {
+  decodeEventsApiItem,
+  EventsApiActorSchema,
+  EventsApiItemSchema,
+  EventsApiPayloadSchema,
+  EventsApiRepoSchema,
+  eventsApiActionOf,
+  eventsApiWorkItemOf,
+  type GithubEventsApiItem
+} from "./events-api.ts"
+export {
   buildEventsApiTrigger,
   buildNotificationTrigger,
   buildWebhookTrigger,
@@ -19,9 +29,11 @@ export { toCanonicalInstant } from "./instant.ts"
 export { type GithubConfigLoadError, githubMappingConfig, loadGithubConfig, loadGithubConfigFrom } from "./mapping.ts"
 export { validateGithubTriggers } from "./mapping-validation.ts"
 export {
+  githubEventsApiToEvent,
   githubNotificationToEvent,
   githubSource,
   githubToEvent,
+  normalizeEventsApi,
   normalizeNotification,
   normalizeWebhook,
   type WebhookInput

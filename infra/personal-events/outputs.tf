@@ -67,3 +67,13 @@ output "github_webhook_url" {
   description = "The exact Payload URL to paste into a GitHub webhook's settings."
   value       = "https://${local.ingest_domain}/github"
 }
+
+output "github_poller_user_name" {
+  description = "IAM user the Railway poller authenticates as. Create its access key out of band — Terraform deliberately does not, so no credential enters state."
+  value       = aws_iam_user.github_poller.name
+}
+
+output "poller_state_key" {
+  description = "Object key in the operational-state bucket holding the poller's cursors. Set as STATE_KEY in the Railway service."
+  value       = var.poller_state_key
+}

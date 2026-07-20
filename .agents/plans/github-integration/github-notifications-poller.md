@@ -2,12 +2,12 @@
 id: AWE-157
 title: GitHub activity poller — Events + Notifications (Railway fallback)
 type: story
-status: Pending
+status: Implementation Adjustment
 parent: ./feature.md
 branch: github-integration
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-28
-updated: 2026-06-29
+updated: 2026-07-19
 ---
 
 # Story: GitHub activity poller — Events + Notifications (Railway fallback)
@@ -306,3 +306,113 @@ From `.agents/general.md`, `.agents/guidance/aws.md`, `.agents/guidance/logging.
 - Level 3: `pnpm --filter @personal-events/github-poller test`
 - Level 4: local `node dist/index.js` against real test PATs writes to a test bucket; deploy to
   Railway, confirm logs show alternating 200/304 cycles and objects landing in S3.
+
+## Plan refresh (2026-07-19) — what changed between planning and execution
+
+| Planned assumption | Reality | Action |
+| :--- | :--- | :--- |
+| Poller state lives at `state/github-poller.json` **in the event bucket** | **this would have been a silent, total outage** — see below | The state object lives in the separate operational-state bucket AWE-156 introduced |
+| Two files, `notifications-cycle.ts` and `events-cycle.ts` | the two cycles differ in exactly three pure functions | One generic `source-cycle.ts` plus a `SourceDefinition` per source in `sources.ts`. Two near-identical cycle files would have drifted, and the invariant that matters (advance state only after a successful write) would then exist twice |
+| `aws_iam_access_key` "with a sensitive output if acceptable for this personal project" | the state file lives in an S3 bucket more things can read than should see a credential | Terraform creates the **user and policy only**; the key is created out of band. The command is in `setup.md` |
+| `.agents/frameworks/effect/…` API reference | `.agents/cache/effect/**` does not exist here | Verified against installed typings |
+| `AWE-155's shared @personal-events/event-sink` | shipped as planned | Reused unchanged — identical event keys and write path as the webhook |
+
+### ⚠️ The story's state-object location was the same silent-total-loss bug as AWE-156's
+
+`state/github-poller.json` in the **event bucket** would have stranded the desktop notifier exactly
+as delivery markers would have: `apps/desktop-notifier/src/poller.ts` lists that bucket with
+`StartAfter` and **no prefix filter**, and advances its mark to the highest key seen. `"state/…"`
+begins with `s`, which sorts above every digit, so the first poll to see it would push the consumer's
+mark above every `"2026-…"` event key that will ever exist. Both stories are fixed by the same
+separate bucket; the reasoning is recorded in `poller-state-repository.ts`, the Terraform, and
+`infra/README.md`.
+
+### 🐛 A real defect found by running the built binary, not by any spec
+
+The loop's default scheduler was `setTimeout(...).unref()`. An `unref`'d timer does not keep the
+event loop alive — and between polls that timer is the *only* handle a healthy poller holds. So the
+process **ran exactly one cycle per source and then exited**, with a log that looks like success: a
+clean startup, one `polled` line, no error at all.
+
+Reproduced against the built binary (`node apps/github-poller/dist/index.js`), fixed, and re-verified
+both ways: the process now stays alive across several cycles, **and** stops promptly on `SIGTERM`
+rather than lingering for up to `maxBackoffMs` (fifteen minutes — long enough for Railway to
+`SIGKILL` a service that was trying to exit politely). The scheduler now clears its pending timer on
+abort. Both halves and the reasoning are in `source-poller.ts`'s docblock.
+
+This is the argument for `.agents/tests.md`'s *"if it's a script, run the script"* rule: no unit spec
+would have caught it, because every spec injects its own scheduler.
+
+### Other design decisions taken during implementation
+
+- **A missing token disables a source, never the process.** The two endpoints need different
+  credential *types* — `GET /notifications` accepts a **classic** PAT only, not a fine-grained one
+  and not an App token — so a user plausibly holds one and not the other. Refusing to start would
+  take away the working half.
+- **`X-Poll-Interval` is read from every response including a 304**, and `nextDelayMs` takes the
+  **largest** of {base interval, poll interval, retry-after, back-off} rather than a priority order,
+  so no signal can be accidentally suppressed by another. A `Retry-After` longer than the configured
+  ceiling is obeyed — waiting less would be disobeying the API.
+- **A cursor is only ever widened.** A 200 that omits the header it usually sends must not clear a
+  cursor we already had, or the next poll re-fetches unconditionally at full rate-limit price.
+- **A 403 is only a rate limit when the budget is actually exhausted** (`x-ratelimit-remaining: 0`
+  or a `retry-after`). A plain 403 is a permission problem and must not be retried as throttling.
+- **A malformed item is skipped, logged with its id, and does not hold up its siblings**; a *write*
+  failure does not advance the cursor at all, so those items are retried.
+- **The notification `since` cursor advances only to the newest `updated_at` actually seen**, and
+  the dedupe set — not the cursor — is what prevents re-delivery. Advancing past what was seen would
+  skip an item updated in the same second.
+- **The Events API path does not share the notifications timestamp hazard**: an activity item carries
+  a real per-item `created_at`, so this source does not collapse a batch onto one millisecond.
+
+## Deferred verification — NOT met under the code-and-dry-run fence
+
+The fence forbids `terraform apply`, creating AWS resources, deploying to Railway, and calling the
+live GitHub API with a real PAT. These criteria are **unverified** — not failed, untested.
+
+| Acceptance criterion | Status | Command or step the user must run to close it |
+| :--- | :--- | :--- |
+| A real Notifications poll ingests inbox items into S3 | **Unverified** | issue a **classic** PAT with `notifications` scope, set the env from `apps/github-poller/setup.md` § 3, `pnpm --filter @personal-events/github-poller build && node apps/github-poller/dist/index.js`, and look for a `polled` line with `written > 0` |
+| A real Events API poll ingests activity items into S3 | **Unverified** | as above with `GITHUB_EVENTS_PAT` and `GITHUB_USERNAME` set |
+| A second poll immediately after yields **no** new objects (304 / dedupe) | **Unverified** | leave it running for two cycles; expect `nothing new` at `debug`, or `fetched > 0, fresh: 0` |
+| Conditional requests actually produce 304s against the live API | **Unverified** | `LOG_LEVEL=debug` and confirm `nothing new` lines appear after the first successful poll |
+| The classic-PAT constraint is real (a fine-grained PAT genuinely cannot call `/notifications`) | **Unverified** | set `GITHUB_NOTIFICATIONS_PAT` to a **fine-grained** token and confirm `poll failed` with HTTP 401/403 — documented from GitHub's docs, not exercised |
+| Rate-limit handling against a real 429 | **Unverified** | not reproducible on demand; the behaviour is covered by unit specs over scripted responses |
+| The IAM user's policy is sufficient and not excessive | **Unverified** | `terraform apply`, `aws iam create-access-key`, then a live poll; confirm the write succeeds and that `aws s3 ls` with the same key is **denied** |
+| Deployment to Railway | **Unverified** | `railway up` with `apps/github-poller/railway.json`; confirm `github poller started` and alternating 200/304 cycles in `railway logs` |
+| The Dockerfile builds | **Unverified** | `docker build -f apps/github-poller/Dockerfile .` from the repo root — Docker was not run under the fence |
+| Restart mid-run resumes from S3 state without re-notifying | **Unverified** | restart the deployed service and confirm the next cycle reports `fresh: 0` |
+
+**No AWS resource was created. No PAT was requested, invented, or used. No call was made to
+api.github.com. Nothing was deployed to Railway.**
+
+### What WAS verified
+
+- **The built binary was actually run**, four times, and that is what found the `unref` defect. With
+  no configuration it logs the missing fields and exits; with configuration and no tokens it reports
+  both sources disabled and starts nothing; with both tokens **pointed at `http://127.0.0.1:9`** (a
+  dead local port — deliberately, so no request left the machine) both loops start, cycle repeatedly,
+  back off on failure, keep the process alive, and stop promptly on `SIGTERM`.
+- **The S3 pre-flight was exercised against real AWS** with deliberately invalid credentials, and
+  produced the intended operator-readable line: *"event bucket is not usable … access denied — the
+  credentials in use are not allowed to write this bucket"*.
+- **99 specs**, covering: conditional headers per dialect; 200/304/401/403-with-budget/403-throttled/
+  429/5xx/non-array-body/transport-error → the right `PollResult`; `X-Poll-Interval` read from a 304;
+  a cursor not cleared by a 200 that omits it; dedupe across cycles and across a simulated restart;
+  the bounded seen-set evicting oldest-first; **a write failure not advancing the cursor, and the
+  same items retried next cycle**; a malformed item skipped while its siblings are written; the two
+  sources' state branches staying independent; back-off taking the largest signal and obeying a
+  `Retry-After` beyond the ceiling; the loop surviving a cycle that throws.
+- **`terraform fmt -check -recursive`** clean, **`validate` Success** on both roots, and a real
+  scratch `plan`: **`Plan: 34 to add, 0 to change, 0 to destroy`** — AWE-156's 32 plus the poller's
+  IAM user and user policy. Nothing applied.
+
+### Validation actually run
+
+| Level | Command | Result |
+| :--- | :--- | :--- |
+| 1 — style | `pnpm --filter @personal-events/github-poller lint` | clean |
+| 2 — types | `pnpm --filter @personal-events/github-poller typecheck` | clean |
+| 3 — specs | `pnpm --filter @personal-events/github-poller test` | 99 passed |
+| 4 — binary | `node dist/index.js` under four configurations (see above) | starts, loops, backs off, shuts down cleanly |
+| 4 — infra | `fmt -check`, `validate` both roots, scratch `plan` | clean / Success / 34 to add |

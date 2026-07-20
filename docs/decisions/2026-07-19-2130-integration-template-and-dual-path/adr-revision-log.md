@@ -25,3 +25,18 @@ decision the story plans had made:
   body before any JSON parse, rather than a `Webhooks` receiver instance.
 - **The webhook secret is an SSM SecureString**, created by Terraform as a placeholder with
   `ignore_changes = [value]` and set out of band, so it never enters Terraform state.
+
+## 2026-07-19T22:50:00Z — Poller state joins the operational-state bucket; per-source isolation recorded — Alex Turner
+
+Following the AWE-157 implementation. The decision is unchanged; three details are now explicit:
+
+- **The poller's cursor object joins the operational-state bucket** for the same reason the delivery
+  markers did — `"state/…"` sorts above every `"2026-…"` event key, so a state object in the event
+  bucket would strand the desktop notifier past every event that will ever exist. Both AWE-156's and
+  AWE-157's plans had placed their state in the event bucket; one bucket fixes both.
+- **The two sources are isolated by credential, not just by loop.** `GET /notifications` accepts a
+  **classic** PAT only — not fine-grained, not an App token — while the Events API accepts any. A
+  missing token disables that source and leaves the other running; it is never a startup failure.
+- **The Railway poller's IAM access key is created out of band**, like the webhook secret.
+  Terraform owns the user and its (write-only, single-key-scoped) policy, and nothing else, so no
+  credential enters Terraform state.
