@@ -38,3 +38,31 @@ describe("advanceMark", () => {
     expect(a < b).toBe(true)
   })
 })
+
+/**
+ * A **characterization** test of a known, deliberately-deferred limitation — it pins today's
+ * behaviour so the gap is visible in the suite rather than only in prose, and so the follow-up fix
+ * (a lookback poll plus a delivered-key set) turns these red and has to update them consciously.
+ * See `feature.md` § Follow-up candidates.
+ */
+describe("advanceMark — the known loss window (documented, not desired)", () => {
+  it("moves past a same-millisecond sibling that sorts lower, so a later write of it is unreachable", () => {
+    const alert = "2026-01-01T00:00:00.000Z.alert.p5.github.x.json"
+    const notification = "2026-01-01T00:00:00.000Z.notification.p8.github.x.json"
+    // Within one instant the tie-break is eventType -> priority -> source -> name.
+    expect(alert < notification).toBe(true)
+    // A producer stamping one batch with a single toISOString() may PutObject the notification
+    // first. A poll landing between the two writes takes the mark to the notification's key...
+    const afterFirstWrite = advanceMark("", [notification])
+    // ...and the alert, written second, now sorts below the mark, so StartAfter never returns it.
+    expect(alert < afterFirstWrite).toBe(true)
+    expect(advanceMark(afterFirstWrite, [alert])).toBe(afterFirstWrite)
+  })
+
+  it("moves past a skewed producer's key, so a slow clock writes below an already-set mark", () => {
+    const fastProducer = "2026-01-01T00:00:02.000Z.alert.p5.github.x.json"
+    const slowProducer = "2026-01-01T00:00:01.000Z.alert.p5.gitlab.y.json"
+    expect(advanceMark(fastProducer, [slowProducer])).toBe(fastProducer)
+    expect(slowProducer < fastProducer).toBe(true)
+  })
+})

@@ -7,10 +7,10 @@ import { type Event, type EventType, EventTypeSchema, IsoInstant, NoDotString, P
  * `2026-06-28T18:44:30.123Z.alert.p5.github.new-pull-request.json`.
  *
  * The leading ISO instant makes the bucket sort chronologically by key, which is what lets a
- * consumer treat "the last key I processed" as a high-water mark. That only holds because
- * `IsoInstant` pins every timestamp to the same width (see `event.ts`) — a variable-width fraction
- * would make an earlier event sort after a later one and be skipped forever. The remaining segments
- * let a consumer triage from the key alone, without fetching the body.
+ * consumer treat "the last key I processed" as a high-water mark. That property depends entirely on
+ * every timestamp having the same width — see `event.ts` → `isoInstantPattern` for why, which is the
+ * single normative statement of this invariant. The remaining segments let a consumer triage from
+ * the key alone, without fetching the body.
  */
 
 export const eventKeySuffix = ".json"

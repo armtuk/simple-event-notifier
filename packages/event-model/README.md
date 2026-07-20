@@ -33,12 +33,17 @@ key I processed" as a high-water mark and use `ListObjectsV2` `StartAfter` to ca
 delimiters are structural, so `source` and `name` may not contain one; producers normalise dotted
 values (`github.com` → `github-com`) before constructing an event.
 
-**The timestamp's millisecond fraction is mandatory and exactly three digits.** This is load-bearing,
-not cosmetic. `StartAfter` is lexicographic, and `.` (0x2E) sorts below every digit while `Z` (0x5A)
-sorts above every digit — so with a variable-width fraction `…02Z…` > `…02.500Z…` and `…02.12Z…` >
-`…02.123Z…`, meaning an *earlier* event sorts *after* a later one and a consumer's high-water mark
-skips it permanently. Fixing the width makes every instant the same length, so lexicographic order
-is chronological order. `Date.prototype.toISOString()` already emits exactly this shape.
+**The timestamp's millisecond fraction is mandatory and exactly three digits** — the shape
+`Date.prototype.toISOString()` emits. This is load-bearing, not cosmetic: a variable-width fraction
+makes an earlier event sort after a later one, and a consumer's high-water mark then skips it
+permanently. The full argument lives in one place, `src/event.ts` → `isoInstantPattern`; it is not
+restated here so it cannot drift.
+
+**Key order is not write order.** Even with fixed-width instants, the key's timestamp is the
+*producer's* clock, so two events sharing a millisecond, or producers with skewed clocks, can be
+written in an order the key sort does not reflect. Consumers that need every event must not rely on a
+bare high-water mark — see `apps/desktop-notifier/src/poller.ts` and `feature.md` § Follow-up
+candidates.
 
 **Priority is exactly one digit** (`p5`, never `p05`), so the codec is injective: one object key
 denotes one event, and `key → components → key` is the identity.

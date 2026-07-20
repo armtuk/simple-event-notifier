@@ -38,12 +38,7 @@ describe("IsoInstant", () => {
   })
 })
 
-/**
- * The invariant the whole system rests on. The object key leads with the instant, and consumers use
- * "the last key I processed" as a high-water mark against `ListObjectsV2 StartAfter`, which is
- * exclusive and lexicographic. If lexicographic order ever diverges from chronological order, an
- * earlier event sorts after a later one and is skipped permanently.
- */
+/** Pins the invariant stated normatively in `event.ts` → `isoInstantPattern`. */
 describe("IsoInstant ordering", () => {
   const chronological = [
     "2026-06-28T18:44:30.000Z",
