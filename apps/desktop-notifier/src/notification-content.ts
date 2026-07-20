@@ -22,4 +22,4 @@ export const toNotification = (event: Event): DesktopNotification => ({
   sound: eventTypeSounds[event.eventType]
 })
 
-const toMessage = (event: Event): string => (event.workItem === undefined ? event.name : `${event.name}\n${event.workItem.href}`)
+const toMessage = (event: Event): string => (event.workItem === undefined ? event.name : `${event.name}\n${event.workItem}`)

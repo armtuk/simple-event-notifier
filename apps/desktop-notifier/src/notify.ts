@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process"
 import { platform } from "node:process"
 import { promisify } from "node:util"
+import { describeCause } from "@personal-events/event-model"
 import { type NotifierKind, notifierKinds } from "./config.ts"
 import type { DesktopNotification } from "./notification-content.ts"
 
@@ -121,5 +122,3 @@ const run = async (file: string, args: string[]): Promise<NotifyResult> =>
   execFileAsync(file, args)
     .then((): NotifyResult => ({ _tag: "NotifySuccess" }))
     .catch((cause: unknown): NotifyResult => ({ _tag: "NotifyFailure", message: `${file} failed: ${describeCause(cause)}` }))
-
-const describeCause = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))

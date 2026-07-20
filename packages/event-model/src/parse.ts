@@ -1,4 +1,5 @@
 import { Either, ParseResult, Schema } from "effect"
+import { describeCause } from "./describe-cause.ts"
 import { type EventModelError, eventModelError, eventModelErrorReasons } from "./errors.ts"
 import { type Event, type EventEncoded, EventSchema } from "./event.ts"
 
@@ -28,8 +29,6 @@ const parseJson = (json: string): Either.Either<unknown, EventModelError> =>
     try: (): unknown => JSON.parse(json),
     catch: cause => eventModelError(eventModelErrorReasons.invalidEventJson, `Event body is not valid JSON: ${describeCause(cause)}`)
   })
-
-const describeCause = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
 
 const decodeEvent = /*#__PURE__*/ Schema.decodeUnknownEither(EventSchema, { errors: "all" })
 

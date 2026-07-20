@@ -4,7 +4,7 @@ import { Either } from "effect"
 import { afterAll, describe, expect, it } from "vitest"
 import { pollOnce } from "./poller.ts"
 import { createS3Client, probeCredentials } from "./s3-client.ts"
-import { readExemplarText } from "./testing/exemplars.ts"
+import { readExemplarText, readLocalExemplarText } from "./testing/exemplars.ts"
 
 /**
  * The real-bucket integration suite `.agents/tests.md` asks for: no fake client, real `PutObject`
@@ -60,7 +60,7 @@ describe.skipIf(bucket === undefined)("pollOnce against a real bucket", () => {
 
   it("returns a malformed object's body rather than failing the whole poll", async () => {
     const key = `${runId}-malformed.json`
-    await put(key, readExemplarText("not-json.txt"))
+    await put(key, readLocalExemplarText("not-json.txt"))
     const result = await pollOnce(s3, bucket ?? "", `${runId}-l`)
     expect(result.objects.map(object => object.key)).toContain(key)
   })

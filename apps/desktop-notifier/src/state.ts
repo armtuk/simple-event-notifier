@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
+import { describeCause } from "@personal-events/event-model"
 import { Either, ParseResult, Schema } from "effect"
 
 /**
@@ -61,7 +62,5 @@ const failure = (path: string, cause: unknown): LoadStateFailure => ({
   _tag: "LoadStateFailure",
   message: `Could not read state file "${path}": ${describeCause(cause)}`
 })
-
-const describeCause = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
 
 const decodeState = /*#__PURE__*/ Schema.decodeUnknownEither(StateSchema, { errors: "all" })

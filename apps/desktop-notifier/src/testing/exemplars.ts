@@ -1,12 +1,17 @@
-import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { type Event, parseEvent } from "@personal-events/event-model"
-import { Either } from "effect"
+import { exemplarReader } from "@personal-events/event-model/testing"
 
-/** Test-support only: reads the representative object bodies under `exemplars/`. */
+/**
+ * Event exemplars come from `@personal-events/event-model` itself — they are the contract's data,
+ * and a local copy could drift while this suite kept passing against a stale shape. Re-exported so
+ * specs have a single import.
+ *
+ * This package's own `exemplars/` holds only bodies that are genuinely a desktop-notifier concern:
+ * objects that turn up in the bucket and are not events at all.
+ */
 
-const exemplarsDir = join(import.meta.dirname, "..", "..", "exemplars")
+export { readExemplar, readExemplarEvent, readExemplarText } from "@personal-events/event-model/testing"
 
-export const readExemplarText = (fileName: string): string => readFileSync(join(exemplarsDir, fileName), "utf-8")
+const localExemplars = /*#__PURE__*/ exemplarReader(join(import.meta.dirname, "..", "..", "exemplars"))
 
-export const readExemplarEvent = (fileName: string): Event => Either.getOrThrow(parseEvent(JSON.parse(readExemplarText(fileName))))
+export const readLocalExemplarText = (fileName: string): string => localExemplars.readText(fileName)

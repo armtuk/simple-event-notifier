@@ -22,14 +22,14 @@ describe("parseEvent", () => {
     expect(event.priority).toBe(5)
     expect(event.source).toBe("github")
     expect(event.name).toBe("new-pull-request")
-    expect(event.workItem?.href).toBe("https://www.jira.com/browse/AWE-150")
+    expect(event.workItem).toBe("https://www.jira.com/browse/AWE-150")
     expect(event.payload.action).toBe("opened")
   })
 
-  it("accepts an exemplar with no workItem and a millisecond-less timestamp", () => {
+  it("accepts an exemplar with no workItem", () => {
     const event = Either.getOrThrow(parseEvent(readExemplar("valid-agent-notification.json")))
     expect(event.workItem).toBeUndefined()
-    expect(event.timestamp).toBe("2026-07-19T09:15:02Z")
+    expect(event.timestamp).toBe("2026-07-19T09:15:02.000Z")
     expect(event.acknowledged).toBe(true)
   })
 
@@ -81,8 +81,25 @@ describe("encodeEvent", () => {
     }
   )
 
-  it("serializes the workItem URL back to its string form", () => {
+  it("serializes the workItem back to its string form", () => {
     const json = Either.getOrThrow(Either.flatMap(parseEvent(readExemplar("valid-github-pull-request.json")), encodeEventJson))
     expect(JSON.parse(json).workItem).toBe("https://www.jira.com/browse/AWE-150")
+  })
+
+  /**
+   * The exemplars all happen to carry already-normalized URLs, so a round-trip over them alone would
+   * pass even for a codec that rewrites its input. This pins the property on inputs that would move.
+   */
+  it.each(["https://github.com", "HTTPS://GitHub.com/Foo", "https://x.test/a?b=1&b=2"])(
+    "leaves a non-normalized workItem %s byte-identical through decode → encode",
+    workItem => {
+      const raw = { ...(readExemplar("valid-github-pull-request.json") as Record<string, unknown>), workItem }
+      expect(Either.getOrThrow(Either.flatMap(parseEvent(raw), encodeEvent)).workItem).toBe(workItem)
+    }
+  )
+
+  it("rejects a workItem that is not an absolute URL rather than storing it", () => {
+    const raw = { ...(readExemplar("valid-github-pull-request.json") as Record<string, unknown>), workItem: "browse/AWE-150" }
+    expect(Either.isLeft(parseEvent(raw))).toBe(true)
   })
 })

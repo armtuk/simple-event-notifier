@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { classifyObjects, parsedObjects, rejectedObjects } from "./classify.ts"
 import type { PolledObject } from "./poller.ts"
-import { readExemplarText } from "./testing/exemplars.ts"
+import { readExemplarText, readLocalExemplarText } from "./testing/exemplars.ts"
 
 const objectFor = (fileName: string, key: string): PolledObject => ({ key, body: readExemplarText(fileName) })
 
@@ -9,7 +9,7 @@ const goodObject = objectFor("valid-github-pull-request.json", "2026-06-28T18:44
 
 const badSchemaObject = objectFor("invalid-priority-out-of-range.json", "2026-06-28T18:44:31.000Z.alert.p9.github.new-pull-request.json")
 
-const notJsonObject = objectFor("not-json.txt", "2026-06-28T18:44:32.000Z.alert.p1.junk.junk.json")
+const notJsonObject: PolledObject = { key: "2026-06-28T18:44:32.000Z.alert.p1.junk.junk.json", body: readLocalExemplarText("not-json.txt") }
 
 describe("classifyObjects", () => {
   it("parses a well-formed object into an event carrying its key", () => {

@@ -1,3 +1,4 @@
+export { describeCause } from "./describe-cause.ts"
 export {
   type EventModelError,
   type EventModelErrorReason,
@@ -18,7 +19,8 @@ export {
   Priority,
   priorityBounds,
   type SchemaVersion,
-  schemaVersions
+  schemaVersions,
+  WorkItemUrl
 } from "./event.ts"
 export {
   buildEventKey,

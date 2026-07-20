@@ -1,22 +1,33 @@
 import { Either, ParseResult, Schema } from "effect"
 import { type EventModelError, eventModelError, eventModelErrorReasons } from "./errors.ts"
-import { type Event, type EventType, EventTypeSchema, eventTypes, IsoInstant, NoDotString, Priority } from "./event.ts"
+import { type Event, type EventType, EventTypeSchema, IsoInstant, NoDotString, Priority } from "./event.ts"
 
 /**
  * The S3 object-key codec: `{timestamp}.{type}.{priority}.{source}.{name}.json`, e.g.
  * `2026-06-28T18:44:30.123Z.alert.p5.github.new-pull-request.json`.
  *
  * The leading ISO instant makes the bucket sort chronologically by key, which is what lets a
- * consumer treat "the last key I processed" as a high-water mark. The remaining segments let a
- * consumer triage from the key alone, without fetching the body.
+ * consumer treat "the last key I processed" as a high-water mark. That only holds because
+ * `IsoInstant` pins every timestamp to the same width (see `event.ts`) — a variable-width fraction
+ * would make an earlier event sort after a later one and be skipped forever. The remaining segments
+ * let a consumer triage from the key alone, without fetching the body.
  */
 
 export const eventKeySuffix = ".json"
 
 export const eventKeyPriorityPrefix = "p"
 
-/** Anchored so a key with a missing, extra, or dotted segment fails rather than matching loosely. */
-export const eventKeyPattern = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z)\.([^.]+)\.p(\d+)\.([^.]+)\.([^.]+)\.json$/
+/**
+ * Anchored so a key with a missing, extra, or dotted segment fails rather than matching loosely.
+ *
+ * The timestamp group mirrors `isoInstantPattern` exactly — fixed-width, so keys sort
+ * chronologically. Priority is captured as a single digit rather than `\d+` so the codec is
+ * **injective**: `p05` and `p5` would otherwise decode to the same event while re-encoding to only
+ * one of them, meaning two distinct S3 keys denote one event and `key → components → key` is not
+ * the identity. The type segment stays loose (`[^.]+`) on purpose so an unknown value is rejected
+ * by `EventTypeSchema` with a message naming `eventType`, rather than looking like a shape error.
+ */
+export const eventKeyPattern = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)\.([^.]+)\.p(\d)\.([^.]+)\.([^.]+)\.json$/
 
 export const EventKeyComponents = /*#__PURE__*/ Schema.Struct({
   timestamp: IsoInstant,
@@ -51,20 +62,23 @@ export const parseKey = (key: string): Either.Either<EventKeyComponents, EventMo
     )
   )
 
-const eventTypeByName: Partial<Record<string, EventType>> = eventTypes
-
 /**
- * Splits the key on its structural `.` delimiters. Returns the *encoded* component shape; range
- * and pattern validation is left to `EventKeyComponents` so failures name the offending field.
+ * Splits the key on its structural `.` delimiters. This decides only whether the key has the right
+ * *shape*; every *value* judgement — is the timestamp well formed, is the type known, is the
+ * priority in range — is left to `EventKeyComponents` so the failure names the offending field
+ * rather than reporting a generic "malformed key".
+ *
+ * The `eventType` cast is the boundary: the regex proves the segment contains no `.`, and
+ * `EventTypeSchema` is what actually gates the value. Resolving it here instead (through a
+ * `Record` lookup) would fold an unknown-but-well-shaped type back into the shape error.
  */
 const matchKey = (key: string): Either.Either<typeof EventKeyComponents.Encoded, string> => {
   const [, timestamp, rawEventType, rawPriority, source, name] = eventKeyPattern.exec(key) ?? []
-  const eventType = rawEventType === undefined ? undefined : eventTypeByName[rawEventType]
-  return timestamp === undefined || eventType === undefined || rawPriority === undefined || source === undefined || name === undefined
+  return timestamp === undefined || rawEventType === undefined || rawPriority === undefined || source === undefined || name === undefined
     ? Either.left(
-        `expected {timestamp}.{alert|notification}.p{priority}.{source}.{name}${eventKeySuffix} with no "." inside the source or name segments`
+        `expected {timestamp}.{type}.p{priority}.{source}.{name}${eventKeySuffix}, where {timestamp} has exactly three fractional digits, {priority} is one digit, and no segment contains "."`
       )
-    : Either.right({ timestamp, eventType, priority: Number.parseInt(rawPriority, 10), source, name })
+    : Either.right({ timestamp, eventType: rawEventType as EventType, priority: Number.parseInt(rawPriority, 10), source, name })
 }
 
 /** A `Schema` over the key string so the codec composes with other effect schemas. */
