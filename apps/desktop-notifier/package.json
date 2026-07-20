@@ -1,0 +1,32 @@
+{
+  "name": "@personal-events/desktop-notifier",
+  "version": "0.0.1",
+  "description": "Long-running daemon that polls the S3 event bucket and raises native desktop notifications",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "personal-events-notifier": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "start": "node dist/index.js",
+    "lint": "biome check src/",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "catalog:",
+    "@aws-sdk/credential-providers": "catalog:",
+    "@personal-events/event-model": "workspace:*",
+    "effect": "catalog:",
+    "toasted-notifier": "catalog:",
+    "winston": "catalog:"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "catalog:",
+    "@types/node": "catalog:",
+    "tsup": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

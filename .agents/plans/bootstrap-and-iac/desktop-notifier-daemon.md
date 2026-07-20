@@ -2,12 +2,12 @@
 id: AWE-152
 title: Desktop notifier daemon (end-to-end S3 → notification)
 type: story
-status: Pending
+status: Implementation Adjustment
 parent: ./feature.md
 branch: feat/bootstrap-and-iac
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-28
-updated: 2026-06-28
+updated: 2026-07-19
 ---
 
 # Story: Desktop notifier daemon (end-to-end S3 → notification)
@@ -233,3 +233,164 @@ Execute in order.
 - Level 4 — Manual E2E: start the daemon (`node apps/desktop-notifier/dist/index.js`), then
   `aws s3 cp exemplars/valid-github.json s3://<bucket>/<built-key>` and confirm a desktop
   notification appears within the poll interval; kill + restart and confirm no re-notify.
+
+## Execution notes (2026-07-19)
+
+Deltas from the plan as written, and why:
+
+- **`classify.ts` added** between the poller and the notifier: the plan put parsing in the daemon
+  loop, but "sort polled bodies into events and rejects" is a pure, total function with its own axis
+  of change and its own failure semantics. Keeping it out of `daemon.ts` is what makes "a malformed
+  object is logged and skipped" a unit test rather than an integration test.
+- **`toNotification` takes only the `Event`** and `daemon.ts` receives a sliced `DaemonSchedule`
+  (`pollIntervalMs`, `maxBackoffMs`) rather than the whole `DaemonConfig` — slice-don't-dump.
+- **`parseConfig` takes the environment as an argument** instead of reading `process.env`. The whole
+  process boundary (env, signals, exit code) is confined to `index.ts`; every module beneath it is
+  argument-driven and therefore testable.
+- **Backoff jitter takes an injectable `random`**, so `nextDelayMs` is deterministic under test.
+- **`fallbackNotifier` latches.** Discovered while running the E2E: under pnpm on macOS,
+  `toasted-notifier`'s bundled `terminal-notifier` helper is installed **without its executable
+  bit** (the package ships no postinstall to chmod it), so every call fails `EACCES`. Adding it to
+  `onlyBuiltDependencies` does not help — there is no install script to run. The `auto` notifier
+  already fell through to the shell adapter; it now remembers the failure, so the dead helper costs
+  one failed spawn per **process** instead of one per **event**. **This is the feature's flagged
+  `toasted-notifier` risk actually materializing, and the adapter design absorbed it** — the fix was
+  confined to `notify.ts`.
+- **Mocks:** `.agents/tests.md` prefers a real bucket with fixtures. The unit suite uses
+  `testing/fake-s3.ts` — a **real** `S3Client` instance with only `send` replaced (the paginator
+  rejects anything that is not a real instance), so the production
+  `paginateListObjectsV2`/`GetObjectCommand` path is genuinely under test. The real-bucket suite
+  exists as `poller.integration.spec.ts` and is opt-in via `TEST_EVENT_BUCKET`; it could not run
+  here because the bucket does not exist yet and writing to a real bucket is outside the
+  side-effect fence.
+- **`daemon.e2e.spec.ts` added** (opt-in via `DESKTOP_NOTIFIER_E2E=1`): drives the real notifier
+  from real exemplar object bodies, so the object body → `parseEvent` → `toNotification` → OS chain
+  is provable on a machine with no bucket provisioned.
+
+Result: 61 specs green across config, classify, notification-content, notify, poller, state and
+daemon; `biome check` and `tsc --noEmit` clean; `tsup` produces a runnable `dist/index.js`.
+
+## Deferred verification — NOT met under the code-and-dry-run fence
+
+AWE-152's end-to-end criterion depends on the AWE-151 bucket, which was not applied (see that
+story's deferred section). The following are **unverified**:
+
+| Acceptance criterion | Status | Command the user must run to close it |
+| :--- | :--- | :--- |
+| Putting a valid event object into the **provisioned** bucket produces a desktop notification within one poll interval | **Unverified** | apply AWE-151, then `EVENT_BUCKET=… node apps/desktop-notifier/dist/index.js` and `aws s3 cp` an exemplar to the built key |
+| `pollOnce` against a real bucket returns only objects after the mark | **Unverified** | `TEST_EVENT_BUCKET=<disposable bucket> AWS_REGION=… pnpm --filter @personal-events/desktop-notifier test` |
+| A restart against a real bucket does not re-notify | **Unverified** | run the daemon, `aws s3 cp` an event, kill and restart, confirm silence |
+
+### What WAS verified locally
+
+- **Real desktop notifications were raised on this macOS machine** by
+  `DESKTOP_NOTIFIER_E2E=1 pnpm --filter @personal-events/desktop-notifier test` and by the
+  `shellNotifierAdapter` spec — the notification path itself is proven end to end, including
+  AppleScript quoting of a title containing `"` and a message containing a newline.
+- **Missing credentials:** running with an empty credential environment logs
+  `No usable AWS credentials; the daemon cannot poll the event bucket … "Could not load credentials
+  from any providers"` and exits 1. No crash.
+- **Unreachable bucket:** running against a non-existent bucket logs
+  `Poll failed; backing off before the next attempt … "The specified bucket does not exist"` on each
+  tick, backs off to the configured ceiling, keeps the mark, and shuts down cleanly on `SIGTERM`
+  (`Shutdown signal received; finishing the current tick` → `Stopped`). No crash, no state written.
+- **Missing configuration:** starting with no `EVENT_BUCKET` prints
+  `Invalid daemon configuration: DaemonConfig └─ ["bucket"] └─ is missing` and exits 1.
+- **Malformed object handling, mark advance, pagination, restart-without-re-notify, and same-
+  millisecond events** are all covered by the unit suite against the fake S3 transport — *not*
+  against the built daemon binary.
+
+## R1 review fixes (2026-07-19)
+
+Applied after the independent R1 pass (`claude-automated-code-review.md` → `## R1 — 2026-07-19`).
+Spec count rose 60 → 86 passing (91 including the five opt-in specs). *(Superseded by the R2 round,
+which took this app to **95 passing / 100 including the opt-in specs** — see § R2 review fixes.)*
+
+- **#2 MAJOR — `runDaemon` retained one promise and one async frame per tick, forever.** Returning
+  the recursive call from an `async` function chains every tick's promise to the next, so the first
+  never settles until the last does — ~2,880 retained frames/day at the default interval, in a
+  process meant to run for weeks. It was also an unrecorded deviation from the plan's resolved
+  decision ("a self-scheduling async tick (recursive `setTimeout`)"). Rewritten to schedule each tick
+  from inside the previous tick's timer callback and discard its promise, so frames unwind; the loop
+  now holds only `state` and a timer handle, which **is** the shape the plan specified.
+  - Care was needed to preserve shutdown semantics: abort **between** ticks stops immediately, abort
+    **during** a tick lets that tick finish raising notifications and persisting its mark (the log
+    line says "finishing the current tick"). A first attempt resolved on the abort event
+    unconditionally and cut the in-flight tick short — caught by the existing spec, and now guarded
+    by a `ticking` flag. *(Superseded by R2-4: the spec added here did **not** discriminate the
+    chained shape and was renamed to what it actually tests — "keeps polling on the configured
+    interval until it is aborted". The non-chaining shape is a documented review responsibility in
+    `CLAUDE.md`, not a guarded one. The `ticking` flag and the shutdown semantics above are unchanged
+    and are still spec-covered.)*
+- **#4 MAJOR — no bucket pre-flight**, which `.agents/guidance/aws.md` § S3 § Usage in Code
+  explicitly mandates. A typo'd `EVENT_BUCKET` produced a process that looked healthy: it started,
+  backed off to the 5-minute ceiling, and notified nobody forever. `probeBucket` (`HeadBucketCommand`,
+  same tagged-union shape as `probeCredentials`) now gates `start()`. `HeadBucket` answers with a
+  bodyless 404/403 whose SDK rendering is a bare `UnknownError`, so `describeBucketFailure` maps the
+  status onto what to actually fix. **Verified against the built daemon:** a non-existent bucket now
+  exits 1 with *"no such bucket in this region — check EVENT_BUCKET and AWS_REGION"*.
+- **#6 MAJOR — no spec asserted any log line**, while `feature.md` marked "a malformed object is
+  logged and skipped" as **Met**. `.agents/tests.md` requires logging itself to be validated, and for
+  this daemon the log line *is* the entire user-visible signal for anything not turned into a
+  notification. Added `testing/capture-logger.ts` — a real winston logger with a `Stream` transport
+  and `format.json()`, so assertions run against the same serialization the file transport produces,
+  `defaultMeta` included. Five new specs assert the skip warning (level, `key`, `reason` naming the
+  field), a delivery info line per event with its triage fields, `service`/`env` on every record, the
+  error line for an undelivered notification, and that an idle tick is silent.
+- **#13 MINOR — `logLevel` and `env` were bare non-empty strings.** `ENV=production` passed and was
+  silently coerced to `dev`, mis-stamping every shipped record; `LOG_LEVEL=verbse` passed and left
+  the daemon running and emitting nothing. Both are now `Schema.Literal` unions, which also deleted
+  `resolveEnv`/`deploymentEnvByName` from `logger.ts`. **Deviation:** the accepted `env` set adds
+  `local` to `.agents/guidance/logging.md`'s four — `.agents/guidance/aws.md` lists `local` among
+  this project's environments and this is a laptop-resident daemon, so rejecting it would make the
+  tool unusable out of the box. It is an explicit fifth value, not a fallback; an unrecognized `ENV`
+  still fails startup. Recorded in `CLAUDE.md` § Documented carve-outs. *(Superseded by R2-6: the
+  carve-out is now one project-wide vocabulary — `local`, `dev`, `qa`, **`staging`**, `prod` — shared
+  verbatim with the Terraform `env` variable, so the third value is no longer spelled `stage` here
+  either.)*
+- **#14 MINOR — slice-don't-dump.** `deliverAll`/`deliverOne` destructured `{ notifier, logger }` but
+  their *parameter type* was still the whole `DaemonDependencies`, so `s3`/`bucket`/`stateFile`
+  remained in reach. Introduced `Delivery` and narrowed both.
+- **#7 MAJOR (see AWE-150)** — this app's three duplicated exemplars are deleted; it now reads the
+  contract's canonical data from `@personal-events/event-model/testing` and keeps only
+  `not-json.txt`, which is genuinely its own concern.
+- **#9 MINOR** — the four local `describeCause` copies now import the one in the event-model package.
+
+### Re-verified locally after the fixes
+
+- Missing config, mistyped `ENV`, and an unknown `LOG_LEVEL` each exit 1 naming the offending field.
+- No credentials → *"Could not load credentials from any providers"*, exit 1.
+- Non-existent bucket → the new pre-flight refuses to start, exit 1 (previously: started and backed
+  off forever).
+- `DESKTOP_NOTIFIER_E2E=1` still raises real macOS notifications from real exemplar bodies.
+
+## R2 review fixes (2026-07-19)
+
+Applied after the independent R2 pass (`claude-automated-code-review.md` → `## R2 — 2026-07-19`).
+Spec count rose 86 → **95 passing** (100 including the five opt-in specs).
+
+- **R2-3 — the bucket pre-flight killed the process on evidence that was not about the bucket.**
+  `probeBucket` now returns a third outcome, `BucketProbeInconclusive`: only 404/403/301 (statuses
+  that genuinely answer *"does this bucket exist here"*) still refuse to start; a transport failure,
+  a 5xx, or any other status logs `warn` and starts into the normal back-off loop. Seven specs pin
+  the split, and the typo'd-`EVENT_BUCKET` behaviour the R1 #4 fix exists for is preserved.
+- **R2-4 — the loop-shape guard spec.** Disputed and upheld; see § R1 #2 above and `feature.md`.
+- **R2-6 — one environment vocabulary**, `local`/`dev`/`qa`/`staging`/`prod`, shared verbatim with
+  Terraform and stated once in `CLAUDE.md`. `stage` is now rejected; `config.spec.ts` asserts it.
+- **R2-7 — `LoadStateFailure` was logged at the same level as a first run.** `stateOutcomeLevels` is
+  a total `Record` over `LoadStateResult["_tag"]`, so a new outcome has to choose a level.
+- **R2-9 — a fall-through `if`** at `daemon.ts:67` took the two-branch form.
+
+## R3 review fixes (2026-07-19)
+
+Applied after the independent R3 final-gate pass (`claude-automated-code-review.md` → `## R3`).
+
+- **R3-2** — `README.md`'s `ENV` table still offered `stage`, a value the daemon now refuses to start
+  on. Corrected to `staging`; this was the last dangling instance in the repo.
+- **R3-3** — the loop-shape rationale was measurably wrong in `CLAUDE.md`, `daemon.spec.ts` and
+  `feature.md` ("heap retention does not diverge"), and overclaimed in the opposite direction in
+  `daemon.ts` ("one async frame per tick"). R3 measured the chained shape: the frames and their
+  captures *are* collected (tail position), but the chain of pending promise objects leaks **~97
+  bytes/tick, linear and unbounded** — ~280 KB/day at the 30 s default. All four sites now say that.
+- **R3-6** — `index.ts:50`'s inconclusive-probe branch was a fall-through `if` the guard-clause
+  carve-out does not cover (it logs and continues); it now carries the two-branch form.

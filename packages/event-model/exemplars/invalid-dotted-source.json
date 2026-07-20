@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "timestamp": "2026-06-28T18:44:30.123Z",
+  "eventType": "alert",
+  "priority": 3,
+  "source": "github.com",
+  "name": "new-pull-request",
+  "acknowledged": false,
+  "handled": false,
+  "payload": {}
+}

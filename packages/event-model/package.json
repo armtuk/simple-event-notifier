@@ -1,0 +1,37 @@
+{
+  "name": "@personal-events/event-model",
+  "version": "0.0.1",
+  "description": "The canonical personal-events event schema and S3 object-key codec",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/exemplars.d.ts",
+      "default": "./dist/testing/exemplars.js"
+    },
+    "./exemplars/*": "./exemplars/*"
+  },
+  "files": ["dist", "exemplars"],
+  "scripts": {
+    "build": "tsup",
+    "lint": "biome check src/",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "catalog:",
+    "@types/node": "catalog:",
+    "tsup": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

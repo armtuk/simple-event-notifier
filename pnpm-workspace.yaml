@@ -1,0 +1,21 @@
+packages:
+  - packages/*
+  - apps/*
+  - infra
+
+catalog:
+  '@aws-sdk/client-s3': ^3.1090.0
+  '@aws-sdk/credential-providers': ^3.1090.0
+  '@biomejs/biome': ^2.4.12
+  '@types/node': ^24.10.1
+  effect: ^3.22.0
+  tsup: ^8.5.1
+  toasted-notifier: ^10.1.0
+  typescript: ^6.0.3
+  vitest: ^4.1.8
+  winston: ^3.19.0
+
+catalogMode: strict
+
+onlyBuiltDependencies:
+  - esbuild

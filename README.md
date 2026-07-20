@@ -1,5 +1,11 @@
 # AWS Work eventer
 
+## Architectural decision records
+
+| ADR | Date | Status | Summary |
+| :-- | :--- | :----- | :------ |
+| [iac-foundation](docs/decisions/2026-07-19-1900-iac-foundation/adr-body.md) | 2026-07-19 | Accepted | Terraform for the AWS substrate, native S3 state locking, and a delegated Route53 subdomain. |
+
 ## Introduction
 
 I have previously scoped a highly complex project to deal with distributed eventing. I set up a complex server infrastructure and clients apps to manage all the "complexity". Recently I had an epiphany that I could accomplish ALL of this with a simple S3 bucket.

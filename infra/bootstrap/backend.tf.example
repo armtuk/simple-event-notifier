@@ -1,0 +1,14 @@
+# Rename to backend.tf AFTER the first `terraform apply` has created the state bucket, then run
+# `terraform init -migrate-state` to move this module's own local state into it.
+#
+# It ships as .example rather than .tf so that `terraform init -backend=false && terraform validate`
+# works on a clean checkout with no AWS account behind it.
+terraform {
+  backend "s3" {
+    bucket       = "tfstate.prod.personal-events.fifthdimensionengineering.com"
+    key          = "bootstrap/terraform.tfstate"
+    region       = "us-east-1"
+    encrypt      = true
+    use_lockfile = true
+  }
+}
