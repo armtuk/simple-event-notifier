@@ -12,3 +12,8 @@
 .agents/plans/.active
 # Session files
 *.session.id
+.idea
+
+node_modules/
+dist/
+build/

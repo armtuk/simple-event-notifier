@@ -14,7 +14,7 @@ For the main project, I think we really just need some IaC to setup the S3 bucke
 
 Then comes the other piece which is the event listener mechanism. I think probably the one actively connected listener I'm going to want is a webhook processor. So I can connect a 3P system like github or stripe to a URL which receives webhook notifications.  Naively, I think this system should have it's own internal event model, probably when it was received, which system it was received for, a priority level from maybe 1 to 8, the event type, wether it's informational or requires attention. Whatever the simplest expression for this is, we should probably use that - my initial guess is an AWS lambda with an API gateway connector. The AWS Lambda, written in Typescript as my preference, will simply receive these webhook requests, classify them based on the payload and headers, wrap them into our event model, and post them into the S3 bucket. Super simple.
 
-One nice advantag of the S3 bucket is that I'll always be able to go back through the event list and see my history.
+One nice advantage of the S3 bucket is that I'll always be able to go back through the event list and see my history.
 
 An alert or even an notification can be actively acknowledged by setting the acknowledged field to true. An event body also has a flag to indicate if it's been handled or not, and a URL to any kind of ticketting system where a ticket can be hosted which will ultimately have it's own workflow and statuses which a more sophisticated client may choose to interact with as part of the payload.
 
@@ -29,7 +29,7 @@ for example:
 which internally will have the format:
 
 ```typescript
-{
+const x = {
   "timestamp": "2026-06-28T18:44:30.123Z",
   "eventType": "alert",
   "priority": 5,
