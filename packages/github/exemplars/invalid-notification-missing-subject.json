@@ -1,0 +1,13 @@
+{
+  "id": "18442312001",
+  "unread": true,
+  "reason": "mention",
+  "updated_at": "2026-07-19T19:02:11Z",
+  "last_read_at": null,
+  "repository": {
+    "id": 845667198,
+    "name": "aws-work-eventer",
+    "full_name": "fifthdimensionengineering/aws-work-eventer"
+  },
+  "url": "https://api.github.com/notifications/threads/18442312001"
+}

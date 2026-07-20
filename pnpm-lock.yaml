@@ -15,6 +15,9 @@ catalogs:
     '@biomejs/biome':
       specifier: ^2.4.12
       version: 2.5.4
+    '@octokit/openapi-webhooks-types':
+      specifier: ^12.1.0
+      version: 12.1.0
     '@types/node':
       specifier: ^24.10.1
       version: 24.13.3
@@ -108,6 +111,37 @@ importers:
       '@biomejs/biome':
         specifier: 'catalog:'
         version: 2.5.4
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.13.3
+      tsup:
+        specifier: 'catalog:'
+        version: 8.5.1(postcss@8.5.20)(typescript@6.0.3)
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.27.7))
+
+  packages/github:
+    dependencies:
+      '@personal-events/event-model':
+        specifier: workspace:*
+        version: link:../event-model
+      '@personal-events/integration-core':
+        specifier: workspace:*
+        version: link:../integration-core
+      effect:
+        specifier: 'catalog:'
+        version: 3.22.0
+    devDependencies:
+      '@biomejs/biome':
+        specifier: 'catalog:'
+        version: 2.5.4
+      '@octokit/openapi-webhooks-types':
+        specifier: 'catalog:'
+        version: 12.1.0
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.3
@@ -471,6 +505,9 @@ packages:
     peerDependencies:
       '@emnapi/core': ^1.7.1
       '@emnapi/runtime': ^1.7.1
+
+  '@octokit/openapi-webhooks-types@12.1.0':
+    resolution: {integrity: sha512-WiuzhOsiOvb7W3Pvmhf8d2C6qaLHXrWiLBP4nJ/4kydu+wpagV5Fkz9RfQwV2afYzv3PB+3xYgp4mAdNGjDprA==}
 
   '@oxc-project/types@0.139.0':
     resolution: {integrity: sha512-r9gHphtCs+1M7J0pw6Sn/hh/Wpa/iQrOOkrNAlVLF/gHq+/CJmHIWKKUUhdWjcD6CIa8idarspCsASiXCXvFUw==}
@@ -1710,6 +1747,8 @@ snapshots:
       '@emnapi/runtime': 1.11.1
       '@tybys/wasm-util': 0.10.3
     optional: true
+
+  '@octokit/openapi-webhooks-types@12.1.0': {}
 
   '@oxc-project/types@0.139.0': {}
 

@@ -1,0 +1,34 @@
+{
+  "action": "submitted",
+  "review": {
+    "id": 3092841177,
+    "node_id": "PRR_kwDOMk1nfs6xLb2Z",
+    "user": { "login": "octocat", "id": 583231, "type": "User" },
+    "body": "One blocker on the timestamp precision; the rest looks good.",
+    "commit_id": "d7d4f0c0f1f4a1b2c3d4e5f60718293a4b5c6d7e",
+    "submitted_at": "2026-07-19T19:31:07Z",
+    "state": "changes_requested",
+    "html_url": "https://github.com/fifthdimensionengineering/aws-work-eventer/pull/42#pullrequestreview-3092841177",
+    "pull_request_url": "https://api.github.com/repos/fifthdimensionengineering/aws-work-eventer/pulls/42",
+    "author_association": "COLLABORATOR"
+  },
+  "pull_request": {
+    "url": "https://api.github.com/repos/fifthdimensionengineering/aws-work-eventer/pulls/42",
+    "id": 2118453901,
+    "number": 42,
+    "state": "open",
+    "title": "AWE-154: GitHub payload schemas, mapping config & normalizer",
+    "html_url": "https://github.com/fifthdimensionengineering/aws-work-eventer/pull/42",
+    "user": { "login": "alexrmturner", "id": 1042318, "type": "User" },
+    "draft": false
+  },
+  "repository": {
+    "id": 845667198,
+    "name": "aws-work-eventer",
+    "full_name": "fifthdimensionengineering/aws-work-eventer",
+    "private": true,
+    "owner": { "login": "fifthdimensionengineering", "id": 178294411, "type": "Organization" },
+    "html_url": "https://github.com/fifthdimensionengineering/aws-work-eventer"
+  },
+  "sender": { "login": "octocat", "id": 583231, "type": "User" }
+}

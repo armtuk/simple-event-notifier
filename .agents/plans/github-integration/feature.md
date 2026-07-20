@@ -143,3 +143,51 @@ Ordered by dependency. Each is a coherent ~1hr-review increment (not a micro-PR)
 - **New architecture element:** write an **ADR** for the integration template + dual-path design.
 - **Depends on `bootstrap-and-iac`:** needs the monorepo (AWE-149), `event-model` (AWE-150),
   and the S3 bucket + Terraform infra (AWE-151) to exist first.
+
+## Follow-up candidates — recorded for the user, deliberately not implemented
+
+### 1. The ordering hazard is the *norm* for the notifications poller, not a coincidence
+
+Level 0's review found, and deliberately did not fix, that a consumer's S3 high-water mark is over
+**producer-supplied** timestamps: an object whose key sorts below the current mark is never re-listed
+and is permanently undelivered (`packages/event-model/README.md` § "Key order is not write order";
+`apps/desktop-notifier/src/poller.ts`; `.agents/plans/bootstrap-and-iac/feature.md` § Follow-up
+candidates).
+
+**This feature makes that hazard routine rather than rare.** AWE-154's resolved decision sets a
+notification event's `timestamp` from the Notifications API's `updated_at`, which GitHub emits at
+**second** precision. Normalised into the contract's mandatory three-digit fraction it becomes
+`.000`, so **every notification in a batch that shares a second shares a millisecond** — and a batch
+is exactly what one poll returns. A consumer poll landing mid-batch advances its mark past siblings
+it has not seen, and loses them permanently.
+
+What was done here: the behaviour is documented at its source (`packages/github/src/instant.ts`),
+pinned by characterization specs in `instant.spec.ts` and `normalizer.spec.ts`, and recorded in the
+feature ADR. **No sub-second detail is invented** — `.000` is honest about the precision that
+arrived — and the poller (AWE-157) writes each event under its own real per-item instant rather than
+batching many events under one shared timestamp, so the situation is not made worse.
+
+What was **not** done: the fix (a lookback poll window plus a delivered-key set on the consumer
+side). It needs a product decision that has not been made — **at-most-once vs
+retry-until-delivered vs quarantine-and-continue, and how wide a lookback** — which is the same
+decision blocking follow-ups #12 and R2-1 from `bootstrap-and-iac`. One ruling closes all three.
+
+### 2. No specificity ladder in the mapping match (surfaced by AWE-154)
+
+`integration-core` matches a trigger by an **exact** match-key over all its fields. A rule is
+therefore matched only by a trigger with precisely the same field set, which has two consequences an
+operator will eventually hit:
+
+- `{ "channel": "webhook", "event": "pull_request" }` does **not** catch every `pull_request` action,
+  because a real delivery's trigger always carries an action.
+- Any field the normalizer always emits but rules rarely constrain must be left out of the trigger
+  entirely. This is why GitHub notification triggers carry only `reason` and not `subject.type`
+  (AWE-154 § Design decisions) — the first implementation included it and every notification rule
+  silently fell through to the default.
+
+The general fix is a **specificity ladder**: the provider declares an ordered list of candidate
+triggers (most specific first) and `classify` takes the first hit. It is a framework change touching
+every integration's contract, so it is recorded here rather than taken mid-feature. Until then the
+mitigations are in place: GitHub rejects an unproducible trigger shape at config load
+(`mapping-validation.ts`) instead of accepting a rule that could never fire, and the constraint is
+documented in both package READMEs.

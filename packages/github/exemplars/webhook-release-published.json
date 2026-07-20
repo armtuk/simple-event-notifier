@@ -1,0 +1,28 @@
+{
+  "action": "published",
+  "release": {
+    "url": "https://api.github.com/repos/fifthdimensionengineering/aws-work-eventer/releases/198446211",
+    "id": 198446211,
+    "node_id": "RE_kwDOMk1nfs4LzKfD",
+    "tag_name": "v0.2.0",
+    "target_commitish": "develop",
+    "name": "v0.2.0 — GitHub integration",
+    "draft": false,
+    "prerelease": false,
+    "created_at": "2026-07-19T20:00:00Z",
+    "published_at": "2026-07-19T20:02:14Z",
+    "html_url": "https://github.com/fifthdimensionengineering/aws-work-eventer/releases/tag/v0.2.0",
+    "author": { "login": "alexrmturner", "id": 1042318, "type": "User" },
+    "assets": [],
+    "body": "Webhook and poller ingestion for GitHub."
+  },
+  "repository": {
+    "id": 845667198,
+    "name": "aws-work-eventer",
+    "full_name": "fifthdimensionengineering/aws-work-eventer",
+    "private": true,
+    "owner": { "login": "fifthdimensionengineering", "id": 178294411, "type": "Organization" },
+    "html_url": "https://github.com/fifthdimensionengineering/aws-work-eventer"
+  },
+  "sender": { "login": "alexrmturner", "id": 1042318, "type": "User" }
+}
