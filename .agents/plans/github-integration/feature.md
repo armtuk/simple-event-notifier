@@ -93,6 +93,24 @@ GitHub event namespaces must be reconciled in the mapping config: webhook `X-Git
 names (e.g. `pull_request`, `issues`) and Notification `reason` values (e.g. `review_requested`,
 `mention`); the config models both.
 
+## Phases
+
+### Phase I — GitHub ingestion and the reusable template · Implementing · (opened 2026-06-28)
+
+| Ticket | Plan file | Story | Status |
+| :--- | :--- | :--- | :--- |
+| AWE-153 | `integration-framework.md` | Reusable integration template (`integration-core`) | **Completed** |
+| AWE-154 | `github-event-mapping.md` | GitHub payload schemas, mapping config & normalizer | **Implementation Adjustment** |
+| AWE-155 | `webhook-ingest-infra.md` | Generic webhook ingest (API Gateway + Lambda) | **Implementation Adjustment** |
+| AWE-156 | `github-webhook-handler.md` | GitHub webhook handler (signature verify → S3) | **Implementation Adjustment** |
+| AWE-157 | `github-notifications-poller.md` | GitHub activity poller (Railway fallback) | **Implementation Adjustment** |
+
+The four non-terminal stories are non-terminal **by design**, not because work is outstanding: each
+has acceptance criteria that can only be closed by `terraform apply`, a real webhook registration, a
+real PAT, or a Railway deployment — all outside the execution fence. Every such criterion is
+enumerated in that story's `## Deferred verification` table with the exact command that closes it.
+The feature reaches `Completed` when those are run, not when more code is written.
+
 ### Story decomposition
 Ordered by dependency. Each is a coherent ~1hr-review increment (not a micro-PR).
 

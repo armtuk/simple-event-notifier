@@ -66,6 +66,22 @@ Biome covers no-semicolons, double quotes, width 140, `noExplicitAny`, `noEnum`,
   the heap signal, while real, needs `--expose-gc` and ~10⁵ ticks to clear the noise floor — a
   classic flaky spec. It is a review responsibility.
 
+## The two-bucket rule — operational state NEVER goes in the event bucket
+
+The event bucket holds events and nothing else. Delivery-dedupe markers, poller cursors, and any
+future operational state live in the **separate** `state.{env}.{system}.{domain}` bucket
+(`infra/personal-events/state-bucket.tf`).
+
+This is a correctness requirement, not organisation. `apps/desktop-notifier/src/poller.ts` lists the
+event bucket with `ListObjectsV2` `StartAfter` and **no prefix filter**, then advances its high-water
+mark to the highest key it saw. Event keys lead with a year — `2026-…` — while `deliveries/…` and
+`state/…` start with a letter, which sorts **above** every digit. A single non-event object in the
+event bucket would push a consumer's mark above every event key that will ever exist, and that
+consumer would **silently never receive another event**, with no error anywhere.
+
+Both `github-integration` story plans originally specified a prefix inside the event bucket; the
+separate bucket is the fix. Do not "simplify" it back.
+
 ## Documented carve-outs from the shared guidance
 
 Deviations recorded here so they are deliberate and bounded rather than eroding silently. Anything

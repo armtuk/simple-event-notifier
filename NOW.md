@@ -136,3 +136,75 @@ coordinator) and on delivery semantics; then the deferred `terraform apply` veri
 AWS resource, no NS record in the live zone.
 
 **Left off at:** validation green uncached; tree clean on `feat/bootstrap-and-iac`.
+
+---
+
+## 2026-07-19 — START — `github-integration` feature execution
+
+**Prompt (summarised):** execute the five `github-integration` stories in dependency order —
+AWE-153 `integration-core`, AWE-154 `packages/github`, AWE-155 the generic webhook ingest,
+AWE-156 the GitHub webhook handler, AWE-157 the Railway poller — in the
+`aws-work-eventer-wt-github-integration` worktree on `github-integration`. Refresh each plan against
+the real repo before executing it (they were planned against an **empty** one). Code and dry-run
+only: no `terraform apply`, no AWS resource, no webhook registered against a real repository, no
+live GitHub API call with a real PAT, no Railway deployment, no push. Do **not** fix the known
+producer-timestamp ordering hazard — record any new instance of it for the user instead.
+
+**Understood as:** build the reusable template first and get its shape right, since Claude Code is
+the next integration to plug into it; treat every story plan as a proposal to be checked against the
+code rather than a specification to be typed in; and be explicit and honest about the large fraction
+of this feature that the side-effect fence leaves untested.
+
+## 2026-07-19 — END — `github-integration` feature execution
+
+**Actions completed**
+
+- **AWE-153 → Completed.** `@personal-events/integration-core`: the mapping-config schema, the
+  `channel`-discriminated trigger and its canonical `matchKey`, compile-then-lookup classification,
+  the pure `transform`, and interfaces-only `SourceAdapter`/`SecondaryProcessor`. ADR
+  `2026-07-19-2130-integration-template-and-dual-path` covers the whole feature.
+- **AWE-154 → Implementation Adjustment.** `@personal-events/github`: subset payload schemas, the
+  non-confusable trigger union (now actually *enforced* against the config), the mapping JSON, and
+  pure normalizers for the webhook and notification channels.
+- **AWE-155 → Implementation Adjustment.** `@personal-events/event-sink` (the single S3 write path)
+  plus `apps/webhook-ingest` and its Terraform: HTTP API, Lambda, ACM certificate, `hooks.` record.
+- **AWE-156 → Implementation Adjustment.** The GitHub webhook edge: HMAC over the raw body, S3
+  delivery-marker dedupe, SSM SecureString secret, and the operator setup runbook.
+- **AWE-157 → Implementation Adjustment.** `apps/github-poller`: dual-source conditional polling,
+  bounded per-source dedupe, S3-persisted cursors, per-source isolation, Dockerfile + Railway config.
+
+**Three defects found and fixed that the plans would have introduced**
+
+1. **Operational state in the event bucket (AWE-156 and AWE-157).** `deliveries/…` and `state/…`
+   both sort above every `2026-…` event key, and `apps/desktop-notifier/src/poller.ts` lists the
+   bucket with no prefix filter and advances its mark to the highest key seen — so one marker would
+   have stranded the notifier past every event that will ever exist, silently and permanently. Fixed
+   with a separate operational-state bucket; the rule is now in `CLAUDE.md`.
+2. **The poller exited after one cycle per source.** Its scheduler used `setTimeout(...).unref()`,
+   and between polls that timer is the only handle a healthy poller holds. Found by running the built
+   binary; no unit spec could have caught it, because every spec injects its own scheduler.
+3. **Notification triggers over-specified (AWE-154).** Including `subject.type` meant every
+   notification rule silently fell through to the config default. Caught by the specs.
+
+**@test-removed** — none. No spec was deleted or skipped in this feature.
+
+**Open questions / blockers:** none blocking. The delivery-semantics question is now **three-way**:
+`bootstrap-and-iac`'s #12 and R2-1, plus this feature's notifications timestamp collapse
+(`updated_at` is second-precision, so same-instant siblings are the *norm* for that producer, not a
+coincidence). One ruling — at-most-once vs retry-until-delivered vs quarantine-and-continue, and how
+wide a lookback — closes all three. Recorded in `feature.md` § Follow-up candidates, in the ADR, and
+in `packages/github/src/instant.ts`; deliberately **not** fixed.
+
+**Next steps:** independent code review, then the deferred verifications — they are the only route to
+`Completed` for AWE-154 through AWE-157, and they need the user's AWS account, a webhook secret, a
+classic PAT, and a Railway project.
+
+**Context summary:** `.agents/cache/effect/**` still does not exist, so every Effect call was
+verified against `node_modules/effect` typings. Five new workspace members joined the turbo
+graph (`integration-core`, `github`, `event-sink`, `webhook-ingest`, `github-poller`); `turbo.json`'s `plan`/`deploy` tasks gained `dependsOn: ["^build"]` because
+`archive_file` reads the Lambda bundle at **plan** time, not only apply.
+
+**Left off at:** five commits on `github-integration`; `pnpm build/lint/test/typecheck --force` green
+uncached with 602 specs (Level 0's 182 among them, unchanged); `terraform fmt -check` clean,
+`validate` Success on both roots, and a real scratch `plan` of `34 to add, 0 to change, 0 to destroy`.
+Nothing applied, nothing deployed, nothing pushed.
