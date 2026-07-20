@@ -5,9 +5,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "lint": "terraform -chdir=personal-events fmt -check -recursive && terraform -chdir=bootstrap fmt -check -recursive",
+    "lint": "terraform fmt -check -recursive .",
     "format": "terraform fmt -recursive .",
-    "validate": "terraform -chdir=personal-events validate",
+    "validate": "pnpm run validate:personal-events && pnpm run validate:bootstrap",
+    "validate:personal-events": "terraform -chdir=personal-events init -backend=false -input=false && terraform -chdir=personal-events validate",
+    "validate:bootstrap": "terraform -chdir=bootstrap init -backend=false -input=false && terraform -chdir=bootstrap validate",
     "plan": "terraform -chdir=personal-events plan",
     "deploy": "terraform -chdir=personal-events apply"
   }

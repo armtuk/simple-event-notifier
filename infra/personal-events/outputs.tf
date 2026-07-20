@@ -1,16 +1,16 @@
 output "event_bucket_name" {
   description = "Name of the S3 event bucket. Consumers (e.g. the desktop notifier) read this into EVENT_BUCKET."
-  value       = aws_s3_bucket.event_log.bucket
+  value       = module.event_log.name
 }
 
 output "event_bucket_arn" {
   description = "ARN of the S3 event bucket, for IAM policies granting producers and consumers access."
-  value       = aws_s3_bucket.event_log.arn
+  value       = module.event_log.arn
 }
 
 output "event_bucket_region" {
   description = "Region the event bucket lives in."
-  value       = aws_s3_bucket.event_log.region
+  value       = module.event_log.region
 }
 
 output "system_domain" {

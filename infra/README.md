@@ -4,10 +4,16 @@ Terraform for the S3 event bucket and the delegated Route53 zone. See ADR
 [`2026-07-19-1900-iac-foundation`](../docs/decisions/2026-07-19-1900-iac-foundation/adr-body.md)
 for why it is shaped this way.
 
-| Root module | State | Creates | Applied |
-| :--- | :--- | :--- | :--- |
-| `bootstrap/` | local, then migrated into the bucket it creates | the Terraform remote-state bucket | once, by hand |
-| `personal-events/` | remote (S3 + `use_lockfile`) | the S3 event bucket, the delegated hosted zone, and the `NS` delegation in the parent zone | on every change |
+| Module | Kind | State | Creates | Applied |
+| :--- | :--- | :--- | :--- | :--- |
+| `bootstrap/` | root | local, then migrated into the bucket it creates | the Terraform remote-state bucket | once, by hand |
+| `personal-events/` | root | remote (S3 + `use_lockfile`) | the S3 event bucket, the delegated hosted zone, and the `NS` delegation in the parent zone | on every change |
+| `modules/hardened-bucket/` | shared | — | the bucket hardening both roots need: ACLs off, public access blocked four ways, versioned, SSE-S3, incomplete uploads reaped | called, never applied directly |
+
+`modules/hardened-bucket/` exists so "how we harden an S3 bucket" changes in one place. Only the
+retention and tiering rules genuinely differ between the two buckets, and those are module inputs.
+The bootstrap module uses it too: its bootstrapping constraint is about *Terraform state*, not
+module resolution — a local module directory is just files on disk.
 
 ## Naming
 
@@ -20,13 +26,14 @@ Everything follows `{usage}.{env}.{system}.{domain}` from `.agents/guidance/aws.
 ## Offline checks (no AWS account required)
 
 ```bash
-terraform -chdir=personal-events init -backend=false
-terraform -chdir=personal-events validate
-terraform fmt -check -recursive .
+pnpm --filter @personal-events/infra lint      # terraform fmt -check -recursive .
+pnpm --filter @personal-events/infra validate  # init -backend=false + validate, BOTH roots
 ```
 
-`-backend=false` skips remote-state initialization, so these work on a clean checkout. This is also
-what `pnpm --filter @personal-events/infra lint` and `… validate` run.
+`validate` runs `terraform init -backend=false -input=false` before `terraform validate` for each
+root, because `validate` needs an initialized working directory and `.terraform/` is gitignored —
+without the `init` it fails on a clean checkout with *"Module not installed"*. `-backend=false`
+skips remote-state initialization, so neither command needs an AWS account or the state bucket.
 
 ## First-time bootstrap (creates real AWS resources)
 
