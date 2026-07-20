@@ -2,12 +2,12 @@
 id: AWE-151
 title: "IaC: S3 event bucket & Route53 delegated zone (Terraform)"
 type: story
-status: Pending
+status: Implementation Adjustment
 parent: ./feature.md
 branch: feat/bootstrap-and-iac
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-28
-updated: 2026-06-28
+updated: 2026-07-19
 ---
 
 # Story: IaC — S3 event bucket & Route53 delegated zone (Terraform)
@@ -217,3 +217,74 @@ Execute in order.
   `dig +short NS personal-events.fifthdimensionengineering.com`
 - Level 4 — Drift check: a second `terraform -chdir=infra/personal-events plan` reports
   "No changes."
+
+## Execution notes (2026-07-19)
+
+Deltas from the plan as written, and why:
+
+- **Layout is `infra/bootstrap/` + `infra/personal-events/`** as planned, with an extra `locals.tf`
+  in each (the derived bucket names and the merged tag map have their own axis of change from the
+  input variables). `s3.tf` is named `state-bucket.tf` in the bootstrap module — it creates the
+  state bucket, not the event bucket, and the filename should say so.
+- **Terraform CLI in use is 1.15.7**; `required_version = ">= 1.11, < 2.0"` as planned.
+  AWS provider resolved under `~> 6.0`. `.terraform.lock.hcl` is committed for both modules.
+- **The backend is configured but deliberately not wired to a real bucket.** `personal-events/backend.tf`
+  carries only the non-environment-specific settings (`key`, `encrypt`, `use_lockfile`); the bucket
+  and region arrive at init time via `-backend-config=backend.hcl` (a `.example` is committed, the
+  real file is gitignored). The bootstrap module's own backend ships as `backend.tf.example` so a
+  clean checkout can run `terraform init -backend=false && terraform validate` with no AWS account
+  behind it. **No DynamoDB lock table** — native S3 locking, as resolved during planning.
+- **`aws_s3_bucket_ownership_controls` with `BucketOwnerEnforced` added** to both buckets. Not in
+  the plan; it disables ACLs entirely, which is the current AWS default posture and closes the ACL
+  vector that `block_public_acls` only partly covers.
+- **`default_tags` on the provider** rather than a `tags` argument repeated on every resource — one
+  place to change, and it covers resources added later for free.
+- **Retention as resolved:** current versions tier to STANDARD_IA at 90d and GLACIER_IR at 365d and
+  **never expire**; noncurrent versions keep the newest 5 and expire after
+  `var.noncurrent_version_retention_days` (180); incomplete multipart uploads abort after 7d. Every
+  rule carries a `filter {}` and the lifecycle config `depends_on` the versioning resource.
+- **ADR written to `docs/decisions/2026-07-19-1900-iac-foundation/`** (the canonical location in
+  `.agents/guidance/adr.md`), not to a `.agents/plans/.../adr/` directory as the plan's file list
+  suggested. Indexed in the root `README.md`.
+- **Acceptance-criterion wording superseded:** the Definition says "a DynamoDB lock table". The
+  implementation uses native S3 locking (`use_lockfile`). Recommend the user amend the criterion.
+- `shellcheck` is not installed on this machine, and no shell scripts were written — the `infra`
+  member's wrapper is `package.json` scripts calling `terraform` directly, so there is nothing for
+  it to check.
+
+## Deferred verification — NOT met under the code-and-dry-run fence
+
+This story was executed under an explicit constraint: **no command that creates, modifies, or
+deletes real AWS resources.** The following acceptance criteria therefore remain **unverified**.
+They are not failures and they are not met — they are untested.
+
+| Acceptance criterion | Status | Command the user must run to close it |
+| :--- | :--- | :--- |
+| `terraform apply` creates the event bucket and the delegated zone | **Unverified** | `terraform -chdir=infra/personal-events apply` (after the bootstrap runbook in `infra/README.md`) |
+| Querying the parent zone returns an `NS` record delegating `personal-events.fifthdimensionengineering.com` | **Unverified** | `dig +short NS personal-events.fifthdimensionengineering.com` |
+| A second `plan` after `apply` shows no drift | **Unverified** | `terraform -chdir=infra/personal-events plan` → expect "No changes." |
+| Bucket versioning / public-access-block / SSE are actually set on the live bucket | **Unverified** | `aws s3api get-bucket-versioning`, `get-public-access-block`, `get-bucket-encryption` |
+| Re-apply is idempotent | **Unverified** | a second `terraform apply` |
+| Remote state initializes against the S3 backend with `use_lockfile` | **Unverified** | the bootstrap runbook, then `terraform init -backend-config=backend.hcl` |
+| A non-existent parent zone fails the plan with an actionable message | **Unverified** | `terraform plan -var parent_zone_name=does-not-exist.example` |
+| Missing/incorrect credentials fail with a clear error | **Unverified** | `AWS_PROFILE=nope terraform plan` |
+
+**No NS records were written into the live `fifthdimensionengineering.com` zone.**
+
+### What WAS verified
+
+- `terraform fmt -check -recursive` clean across both modules (also runs as the `infra` member's
+  turbo `lint` task).
+- `terraform init -backend=false && terraform validate` — **Success** for both `bootstrap/` and
+  `personal-events/`.
+- **A real, clean `terraform plan`.** Run against a scratch copy of `personal-events/` with
+  `backend.tf` removed (so local state was used and the non-existent remote-state bucket was not
+  touched): `Plan: 8 to add, 0 to change, 0 to destroy` with **no errors**. Nothing was applied.
+  - The `data "aws_route53_zone" "parent"` lookup **resolved against the real account**
+    (zone id `Z022596723T54QKGKXEYR`), so the parent zone exists, is readable by the configured
+    credentials, and `aws_route53_record.system_delegation` is correctly targeted at it.
+  - Planned resources: the bucket plus its public-access-block, ownership-controls, versioning,
+    SSE, and lifecycle configurations; the child hosted zone; and the parent-zone NS record.
+  - Computed outputs resolved as expected —
+    `event_bucket_name = "events.prod.personal-events.fifthdimensionengineering.com"`,
+    `system_domain = "personal-events.fifthdimensionengineering.com"`.
