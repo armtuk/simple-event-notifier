@@ -330,3 +330,29 @@ Applied after the independent R1 pass (`claude-automated-code-review.md` → `##
 **Nothing in this round changed the fence position:** no `terraform apply`, no AWS resource created,
 no NS record written into the live `fifthdimensionengineering.com` zone. Every row in the
 "Deferred verification" table above still stands as written.
+
+## R2 review fixes (2026-07-19)
+
+Applied after the independent R2 pass (`claude-automated-code-review.md` → `## R2 — 2026-07-19`).
+
+- **R2-5 MINOR — `infra/modules/hardened-bucket` accepted any input.** The module the R1 #8 refactor
+  created had no `validation` blocks at all, so a bad value would have failed at apply time against
+  real AWS rather than at `terraform validate` — the opposite of what a shared module is for. All
+  five inputs are now validated (seven blocks), including an S3 bucket-name grammar and its
+  IP-address exclusion. The `bootstrap` root also gained the `env` validation `personal-events`
+  already had.
+- **R2-6 — the `env` variable's accepted set** is now `["local","dev","qa","staging","prod"]` in both
+  roots, identical to the TypeScript side's `Schema.Literal`. `CLAUDE.md` § Documented carve-outs
+  states the vocabulary once and both halves point back at it.
+
+**No resource changed.** `validation` blocks are plan-invisible, so `Plan: 8 to add, 0 to change,
+0 to destroy` still holds, and the fence position is unchanged: no `terraform apply`, no AWS resource
+created, no NS record written into the live `fifthdimensionengineering.com` zone.
+
+## R3 review fixes (2026-07-19)
+
+- **R3-7 NIT — `newer_noncurrent_versions_kept >= 0` admitted `0`**, which S3 rejects
+  (`newer_noncurrent_versions` must be 1–100), against the module header's own promise that a bad
+  value fails `terraform validate` rather than half-creating a bucket. The condition is now
+  `>= 1 && <= 100 &&` whole-number. Both call sites already pass 5 and 20, so nothing changed in the
+  plan.

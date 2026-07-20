@@ -45,7 +45,7 @@ node apps/desktop-notifier/dist/index.js
 | `NOTIFIER` | `auto` | `auto` (toasted-notifier, falling back to a shell command), `toasted`, or `shell` |
 | `LOG_LEVEL` | `info` | one of `error`, `warn`, `info`, `debug` |
 | `LOG_FILE` | unset | when set, JSON logs are also written here |
-| `ENV` | `dev` | one of `local`, `dev`, `qa`, `stage`, `prod`; stamped on every log record |
+| `ENV` | `dev` | one of `local`, `dev`, `qa`, `staging`, `prod`; stamped on every log record |
 
 `NOTIFIER`, `LOG_LEVEL` and `ENV` are closed sets and an unrecognized value **fails startup** rather
 than being silently coerced — `ENV=production` stamping every record as `dev`, or `LOG_LEVEL=verbse`

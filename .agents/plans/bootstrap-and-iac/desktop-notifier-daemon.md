@@ -303,7 +303,8 @@ story's deferred section). The following are **unverified**:
 ## R1 review fixes (2026-07-19)
 
 Applied after the independent R1 pass (`claude-automated-code-review.md` → `## R1 — 2026-07-19`).
-Spec count rose 60 → 86 passing (91 including the five opt-in specs).
+Spec count rose 60 → 86 passing (91 including the five opt-in specs). *(Superseded by the R2 round,
+which took this app to **95 passing / 100 including the opt-in specs** — see § R2 review fixes.)*
 
 - **#2 MAJOR — `runDaemon` retained one promise and one async frame per tick, forever.** Returning
   the recursive call from an `async` function chains every tick's promise to the next, so the first
@@ -316,7 +317,11 @@ Spec count rose 60 → 86 passing (91 including the five opt-in specs).
     **during** a tick lets that tick finish raising notifications and persisting its mark (the log
     line says "finishing the current tick"). A first attempt resolved on the abort event
     unconditionally and cut the in-flight tick short — caught by the existing spec, and now guarded
-    by a `ticking` flag plus a new spec asserting ticks settle independently.
+    by a `ticking` flag. *(Superseded by R2-4: the spec added here did **not** discriminate the
+    chained shape and was renamed to what it actually tests — "keeps polling on the configured
+    interval until it is aborted". The non-chaining shape is a documented review responsibility in
+    `CLAUDE.md`, not a guarded one. The `ticking` flag and the shutdown semantics above are unchanged
+    and are still spec-covered.)*
 - **#4 MAJOR — no bucket pre-flight**, which `.agents/guidance/aws.md` § S3 § Usage in Code
   explicitly mandates. A typo'd `EVENT_BUCKET` produced a process that looked healthy: it started,
   backed off to the 5-minute ceiling, and notified nobody forever. `probeBucket` (`HeadBucketCommand`,
@@ -339,7 +344,10 @@ Spec count rose 60 → 86 passing (91 including the five opt-in specs).
   `local` to `.agents/guidance/logging.md`'s four — `.agents/guidance/aws.md` lists `local` among
   this project's environments and this is a laptop-resident daemon, so rejecting it would make the
   tool unusable out of the box. It is an explicit fifth value, not a fallback; an unrecognized `ENV`
-  still fails startup. Recorded in `CLAUDE.md` § Documented carve-outs.
+  still fails startup. Recorded in `CLAUDE.md` § Documented carve-outs. *(Superseded by R2-6: the
+  carve-out is now one project-wide vocabulary — `local`, `dev`, `qa`, **`staging`**, `prod` — shared
+  verbatim with the Terraform `env` variable, so the third value is no longer spelled `stage` here
+  either.)*
 - **#14 MINOR — slice-don't-dump.** `deliverAll`/`deliverOne` destructured `{ notifier, logger }` but
   their *parameter type* was still the whole `DaemonDependencies`, so `s3`/`bucket`/`stateFile`
   remained in reach. Introduced `Delivery` and narrowed both.
@@ -355,3 +363,34 @@ Spec count rose 60 → 86 passing (91 including the five opt-in specs).
 - Non-existent bucket → the new pre-flight refuses to start, exit 1 (previously: started and backed
   off forever).
 - `DESKTOP_NOTIFIER_E2E=1` still raises real macOS notifications from real exemplar bodies.
+
+## R2 review fixes (2026-07-19)
+
+Applied after the independent R2 pass (`claude-automated-code-review.md` → `## R2 — 2026-07-19`).
+Spec count rose 86 → **95 passing** (100 including the five opt-in specs).
+
+- **R2-3 — the bucket pre-flight killed the process on evidence that was not about the bucket.**
+  `probeBucket` now returns a third outcome, `BucketProbeInconclusive`: only 404/403/301 (statuses
+  that genuinely answer *"does this bucket exist here"*) still refuse to start; a transport failure,
+  a 5xx, or any other status logs `warn` and starts into the normal back-off loop. Seven specs pin
+  the split, and the typo'd-`EVENT_BUCKET` behaviour the R1 #4 fix exists for is preserved.
+- **R2-4 — the loop-shape guard spec.** Disputed and upheld; see § R1 #2 above and `feature.md`.
+- **R2-6 — one environment vocabulary**, `local`/`dev`/`qa`/`staging`/`prod`, shared verbatim with
+  Terraform and stated once in `CLAUDE.md`. `stage` is now rejected; `config.spec.ts` asserts it.
+- **R2-7 — `LoadStateFailure` was logged at the same level as a first run.** `stateOutcomeLevels` is
+  a total `Record` over `LoadStateResult["_tag"]`, so a new outcome has to choose a level.
+- **R2-9 — a fall-through `if`** at `daemon.ts:67` took the two-branch form.
+
+## R3 review fixes (2026-07-19)
+
+Applied after the independent R3 final-gate pass (`claude-automated-code-review.md` → `## R3`).
+
+- **R3-2** — `README.md`'s `ENV` table still offered `stage`, a value the daemon now refuses to start
+  on. Corrected to `staging`; this was the last dangling instance in the repo.
+- **R3-3** — the loop-shape rationale was measurably wrong in `CLAUDE.md`, `daemon.spec.ts` and
+  `feature.md` ("heap retention does not diverge"), and overclaimed in the opposite direction in
+  `daemon.ts` ("one async frame per tick"). R3 measured the chained shape: the frames and their
+  captures *are* collected (tail position), but the chain of pending promise objects leaks **~97
+  bytes/tick, linear and unbounded** — ~280 KB/day at the 30 s default. All four sites now say that.
+- **R3-6** — `index.ts:50`'s inconclusive-probe branch was a fall-through `if` the guard-clause
+  carve-out does not cover (it logs and continues); it now carries the two-branch form.

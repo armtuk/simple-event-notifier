@@ -221,11 +221,12 @@ describe("runDaemon", () => {
    *
    * It deliberately does **not** claim to guard the non-chaining structure of `runDaemon`. It cannot:
    * the chained-`await` implementation polls just as often, so this assertion passes under the bug
-   * too. Two candidate discriminators were measured and both failed — async stack depth does not
-   * grow across the recursive `await` (V8's zero-cost async traces do not chain it: 5 frames vs 3),
-   * and heap retention does not diverge either, because the recursive call is in tail position and
-   * V8 collects the closed-over state. The residual cost of the bug is a chain of pending promise
-   * objects, which has no cheap deterministic assertion.
+   * too. Async stack depth is not a discriminator at all — it does not grow across the recursive
+   * `await` (V8's zero-cost async traces do not chain it: 5 frames vs 3). Heap retention *does*
+   * diverge, but not from the frames: the recursive call is in tail position, so V8 collects the
+   * closed-over state, and the residual cost is the chain of pending promise objects at ~97
+   * bytes/tick — linear and unbounded, yet only ~10 KB over the 100 ticks a spec can afford. Seeing
+   * it takes `--expose-gc` and ~10⁵ ticks, which is the definition of a flaky, slow assertion.
    *
    * So the non-chaining shape is a **review responsibility**, recorded in `CLAUDE.md` § "Rules biome
    * cannot enforce" rather than pretended-at here. A guard that cannot fail on its regression is

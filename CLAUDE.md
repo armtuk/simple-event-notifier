@@ -55,9 +55,16 @@ Biome covers no-semicolons, double quotes, width 140, `noExplicitAny`, `noEnum`,
   call from an `async` function makes the first promise unable to settle until the last one does, so
   pending promises accumulate for the life of the process. Schedule the next iteration from a timer
   callback and discard the previous promise — see `apps/desktop-notifier/src/daemon.ts` → `runDaemon`.
-  This is here because it is **not testable cheaply**: both candidate discriminators were measured
-  and neither works (async stack depth does not grow across the recursive `await`, and heap retention
-  does not diverge because the call is in tail position). It is a review responsibility.
+  The cost of getting this wrong is small per tick but never stops: the closed-over state *is*
+  collected (the recursive call is in tail position, so fattening each tick's state moves the leak by
+  zero), but the chain of pending promise objects, their reaction records and their resolving
+  closures is not — **measured at ~97 bytes/tick, linear and unbounded** (2 390 KB over 25 000 ticks,
+  9 421 KB over 100 000, 37 546 KB over 400 000). At the daemon's 30 s default that is ~280 KB/day,
+  ~8 MB/month, for the life of the process. Cheaper than "one async frame per tick", but not free.
+  This is here rather than in a spec because it is **not testable cheaply**: async stack depth is not
+  a discriminator at all (V8's zero-cost async traces do not chain across the recursive `await`), and
+  the heap signal, while real, needs `--expose-gc` and ~10⁵ ticks to clear the noise floor — a
+  classic flaky spec. It is a review responsibility.
 
 ## Documented carve-outs from the shared guidance
 

@@ -53,6 +53,8 @@ const start = async (config: DaemonConfig): Promise<number> => {
       region: config.region,
       reason: bucket.message
     })
+  } else {
+    // BucketReachable: the probe answered the question it exists to answer, so startup says nothing.
   }
 
   const initial = await resolveInitialState(logger, config)

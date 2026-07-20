@@ -1042,3 +1042,405 @@ for whoever reads `poller.ts` next; the lookback-window implementation itself be
 product conversation as #12. **R2-2** is worth folding in now because it is a one-line `turbo.json`
 edit that protects the fix immediately above it. **R2-3 to R2-8** are good next-round work; **R2-9 to
 R2-12** are housekeeping.
+
+---
+
+## R3 — 2026-07-19 (final gate)
+
+**Reviewer:** independent R3 (fresh eyes; did not write the code, was not R1 and was not R2)
+**Diff reviewed:** `git diff auto/execute-remaining-bootstrap-github..feat/bootstrap-and-iac` (100 files,
+12 commits), with the three R2-fix commits `8beefd1..c341c82` read individually
+**Guidance loaded in full:** `.agents/general.md`, `formatting.md`, `tests.md`,
+`languages/typescript/{typescript,typescript-testing,object-types-typescript}.md`,
+`frameworks/node/preferences.md`, `frameworks/effect/effect.md`, `guidance/{aws,logging,adr,now,planning-artifacts}.md`,
+`code-examples/typescript/src/looping.ts`
+
+### Verdict
+
+**Findings — 0 blockers, 0 majors, 4 minors, 3 nits. Recommendation: merge after the four minors.**
+
+Both fix rounds landed cleanly and nothing regressed. The third `BucketProbeInconclusive` outcome, the
+`LoadStateFailure` level split, the Terraform module validation, the `exemplars/**` turbo input and the
+environment-vocabulary unification were each read against their commit and re-derived from the source;
+all five do what they claim. The branch is green uncached, the fence is intact, and the audit trail is
+still unusually honest.
+
+Everything below is cheap. The two that matter are a **false green in `pnpm lint`** (the same
+explicit-`inputs` trap R2-2 found, surviving one member over) and a **measurably wrong technical claim
+in `CLAUDE.md`** that argues against the very rule it accompanies.
+
+### Independent verification performed
+
+| Check | Result |
+| :--- | :--- |
+| `pnpm install --frozen-lockfile` | clean, lockfile up to date |
+| `pnpm build --force` | 2/2 green |
+| `pnpm lint --force` | 3/3 green |
+| `pnpm typecheck --force` | 3/3 green |
+| `pnpm test --force` | **182 passed, 5 skipped** — 87 event-model (3 files) + 95 desktop-notifier (8 files, 2 skipped). The agent's claim of 182/5 is **accurate**; `feature.md`'s "173" is now stale (finding **R3-5**). |
+| `terraform fmt -check -recursive infra` | clean |
+| `pnpm --filter @personal-events/infra validate` | **Success** for both `bootstrap/` and `personal-events/` |
+| `turbo run lint --dry=json` inputs inspection | see finding **R3-1** |
+| Recursive-await vs scheduled loop measured under `--expose-gc` | see the R2-4 adjudication and finding **R3-3** |
+| Module contract probed offline with an out-of-range input | see finding **R3-7** |
+| Diff scanned for `AKIA`/`ASIA`/`BEGIN … PRIVATE KEY`/`aws_secret_access_key`/`.claude/`/`AGENTS.md`/`*.tfstate`/`backend.hcl`/`.env` | **none present** |
+| `git status --porcelain`, remote branches containing the tip | **clean tree, no upstream, no remote contains it** — nothing pushed |
+
+### Fix audit — did the R2 round break anything?
+
+| R2 # | Verdict | Evidence |
+| :--- | :--- | :--- |
+| **R2-1** doc + follow-up | **Correct, and better than proposed** | `poller.ts`'s docblock now says `StartAfter` is key-lexicographic, that the instant is the *producer's* clock, and that an object written below the mark is never re-listed; both triggers are named. It also goes beyond R2 by giving the honest reason `LastModified` is not simply the better option (not stable under re-writes, not expressible as `StartAfter`). `poller.spec.ts:48-68` is a genuine characterization suite pinning both routes and labelled as such. `packages/event-model/README.md` carries a **"Key order is not write order"** paragraph — the right place, and the one a downstream producer will actually read. Residual: the follow-up row's likelihood framing (**R3-4**). |
+| **R2-2** turbo cache | **Fixed, for `build` and `test`** | `exemplars/**` is in both, with an explanatory comment stating the replace-not-merge semantics. The same trap survives in `lint` — **R3-1**. |
+| **R2-3** inconclusive probe | **Fixed, correctly** | `toProbeFailure` returns `BucketUnreachable` only for a status that is `< 500` **and** present in `bucketFailuresByStatus` (404/403/301) — i.e. exactly the three misconfigurations the guidance is about — and `BucketProbeInconclusive` for everything else including `undefined` status. `start()` hard-exits on the first and logs `warn` + continues on the second. Seven specs pin it (three statuses definitive, three transport shapes inconclusive, one message-carrying). The typo'd-`EVENT_BUCKET` behaviour the R1 #4 fix existed for is preserved. |
+| **R2-4** guard spec | **Disputed by the agent — dispute upheld, with one correction.** See below. |
+| **R2-5** module validation | **Fixed** | Five inputs, seven `validation` blocks including an S3 bucket-name grammar and an IP-address exclusion; `bootstrap` gained the `env` validation it lacked. One value slips through — **R3-7**. |
+| **R2-6** env vocabulary | **Fixed; complete in code, one dangling doc value** | `deploymentEnvs` and `ConfigSchema` use `staging`; both `variables.tf` validate `["local","dev","qa","staging","prod"]`; `CLAUDE.md` states it once and both halves point back at it; `config.spec.ts:44-49` asserts `stage` is now a `Left` and `staging` a `Right`. Grepped every `.ts`/`.tf`/`.md`/`.json` for word-boundary `stage`: the only live one left is `apps/desktop-notifier/README.md:48` — **R3-2**. |
+| **R2-7** state-failure level | **Fixed, exactly as proposed** | `stateOutcomeLevels` is a full (not `Partial`) `Record` over `LoadStateResult["_tag"]`, so a new outcome must choose a level; `logger.log(level, message, meta)` keeps the existing `Record`-lookup shape. |
+| **R2-8** `NOW.md` | **Fixed, and honestly** | Exists, append-only, newest last. The three back-dated entries are explicitly marked *(reconstructed)* with a preamble saying why, and the `@test-removed` rationale for *"recovers a millisecond-less timestamp"* is present with its reason. This is the right way to close a missing-artefact finding. |
+| **R2-9** fall-through `if` | **Fixed at the site named; one new instance introduced in the same commit** | `daemon.ts:67-73` now has the two-branch form. `index.ts:50-56`, added by the same commit, is a new one — **R3-6**. |
+| **R2-10, R2-11, R2-12** | **Fixed** | The bootstrap rule-id rename and its in-place-update consequence are now stated in the same bullet; the Terraform-CLI prerequisite is stated next to the root commands in `CLAUDE.md`. R2-10's number was corrected and has since gone stale again — **R3-5**. |
+
+**Nothing the R2 round changed is superficially patched but still broken, and no R1 fix was undone.**
+
+---
+
+### Adjudication of the disputed R2-4 — the agent is right on three of four points
+
+The agent disputed R2-4's proposed stack-depth discriminator, reported measuring async stack depth
+5 vs 3 and heap 3 MB vs 4 MB, concluded neither discriminates, took R2's alternative (rename the spec,
+move the shape to a documented review responsibility), and noted this weakens R1 #2's *"N async frames
+retained"* framing.
+
+I built both loop shapes side by side and measured retained heap at depth under `--expose-gc`, with a
+control proving the instrument can see a deliberately-retained payload. Results (Node 24.14.0, arm64):
+
+| Shape | 25 000 ticks | 100 000 ticks | 400 000 ticks | Bytes/tick |
+| :--- | ---: | ---: | ---: | ---: |
+| Chained (`return runDaemon(...)` from `async`) | +2 390 KB | +9 421 KB | +37 546 KB | **~97** |
+| Scheduled (this branch) | — | +50 KB | — | **~1 (noise)** |
+| Chained, per-tick state fattened by ~800 B on-heap | — | +9 422 KB | — | **~97 (unchanged)** |
+| **Control** — same loop, states deliberately pushed to a live array | — | +106 415 KB | — | **1 090** |
+
+Adjudication, point by point:
+
+1. **"Async stack depth is not a discriminator" — CORRECT.** V8's zero-cost async stack traces do not
+   chain across the recursive `await`, so the depth is a constant, not a function of tick count. R2's
+   proposed assertion would not have worked.
+2. **"The recursive call is in tail position, so V8 collects the closed-over state" — CORRECT, and this
+   is the load-bearing half.** Fattening each tick's `next` by ~800 bytes of on-heap data moved the
+   chained leak by **zero** (97 → 97 B/tick), while the control — the same loop retaining the same
+   states in a live array — moved it to 1 090 B/tick. The async frame and its captures (`dependencies`,
+   `schedule`, `next`, `signal`) are genuinely released when the function returns. **R1 #2's framing
+   — "one async frame per tick, each closing over the whole dependency set" — is overstated, and the
+   agent was right to say so.**
+3. **"Heap retention does not diverge either" — INCORRECT as stated.** It diverges linearly and without
+   bound at ~97 bytes/tick — the chain of pending `JSPromise` objects, their reaction records and their
+   resolving-function closures, which the agent itself correctly identifies one sentence later as *"the
+   residual cost of the bug"*. The 3 MB vs 4 MB observation simply lacked the tick count to resolve it:
+   at 100 ticks the delta is ~10 KB, invisible in noise. **So the bug R1 #2 named is real and the fix
+   is right — it is just ~30× cheaper per tick than R1 framed it, and not free as the current wording
+   implies.** At the default 30 s interval the pre-fix cost was ~280 KB/day, ~8 MB/month, unbounded.
+4. **"No cheap deterministic assertion" — a defensible engineering judgment, not a fact.** Heap growth
+   *is* a discriminator at scale (9.4 MB vs 50 KB over 100 k ticks is a 190× separation), but it needs
+   `--expose-gc`, which the vitest setup does not pass, and heap assertions are the classic flaky spec.
+   Renaming the spec to what it tests and recording the shape in `CLAUDE.md` is the right call.
+
+**Conclusion: the dispute is upheld and the disposition is correct.** The only defect is that the
+*reason* recorded in three places is wrong in one direction while `daemon.ts`'s own docblock is still
+wrong in the other — finding **R3-3**.
+
+---
+
+### Findings
+
+#### R3-1. MINOR — `turbo.json`'s `lint.inputs` contains no Terraform file, so `pnpm lint` replays a cached PASS over unformatted HCL
+
+`turbo.json:24`
+
+```json
+"lint": { "dependsOn": [], "inputs": ["src/**", "biome.json"], "outputs": [] }
+```
+
+`infra/` has no `src/`, and `biome.json` is package-relative so it matches nothing there. Confirmed with
+`turbo run lint --dry=json` — `@personal-events/infra#lint`'s resolved input set is **`package.json`,
+and nothing else**. Not one of the 20 `.tf` files in the repo is in the hash of the task whose entire
+job is `terraform fmt -check -recursive .`.
+
+Reproduced end to end (damage introduced, then restored; `git status` clean afterwards):
+
+```
+$ pnpm lint                                   # populate the cache
+$ printf '\nlocals {\n      bad_indent = 1\n}\n' >> infra/bootstrap/locals.tf
+$ terraform fmt -check -recursive infra       # → FAILS, as it should
+$ pnpm lint
+  Tasks:    3 successful, 3 total
+  Cached:    3 cached, 3 total
+    Time:    4ms >>> FULL TURBO             # ← green, on a tree fmt rejects
+```
+
+This is exactly **R2-2's defect class** — an explicit `inputs` array replaces turbo's default of all
+git-tracked package files, so anything omitted stops invalidating — surviving in the one task R2 did not
+inspect. The fix round added `exemplars/**` to `build` and `test` and wrote a comment above them
+explaining precisely this hazard, then left `lint` alone.
+
+Blast radius today is formatting only, which is why this is a minor and not a major; the reason to close
+it now is the same reason R2-2 was closed now — the trap grows teeth the moment that script grows a
+`terraform validate` or a `tflint`, and a gate that lies is worse than no gate.
+
+**Proposed fix:** `"inputs": ["src/**", "**/*.tf", "biome.json"]`, or `"inputs": ["$TURBO_DEFAULT$"]`
+if you would rather not enumerate. While there, note that the `"biome.json"` entry is dead — the root
+`biome.json` is already covered by `globalDependencies` — so it can go or be left as documentation.
+
+#### R3-2. MINOR — `apps/desktop-notifier/README.md:48` still documents `stage` as a legal `ENV`, which the daemon now refuses to start on
+
+`apps/desktop-notifier/README.md:48`
+
+```
+| `ENV` | `dev` | one of `local`, `dev`, `qa`, `stage`, `prod`; stamped on every log record |
+```
+
+Two lines below, the same README says *"`NOTIFIER`, `LOG_LEVEL` and `ENV` are closed sets and an
+unrecognized value **fails startup***" — so the table contradicts its own caption. `config.spec.ts:47`
+asserts `parseConfig({ ENV: "stage" })` is a `Left`, and `config.ts:63` is a `Schema.Literal` over
+`staging`. A user following the README's own table gets `Invalid daemon configuration: DaemonConfig └─
+["env"] …` and exit 1.
+
+I grepped every `.ts`, `.tf`, `.md`, `.json`, `.hcl` and `.example` in the repo for word-boundary
+`stage`: this is the **only** dangling value. Everything else — `config.ts`, `config.spec.ts`, both
+`variables.tf`, `CLAUDE.md`, `feature.md`, `NOW.md` — is consistent, and the two remaining `stage`
+mentions in `config.ts:21` and `config.spec.ts:45` are deliberate references to `logging.md`'s spelling
+in an explanation of why this project differs. **The unification is otherwise genuinely complete in both
+halves.**
+
+**Proposed fix:** `one of `local`, `dev`, `qa`, `staging`, `prod``.
+
+#### R3-3. MINOR — the loop-shape rationale is measurably wrong in `CLAUDE.md`, and `daemon.ts` still carries the opposite overclaim
+
+`CLAUDE.md:59-60`; `apps/desktop-notifier/src/daemon.spec.ts:224-227`;
+`.agents/plans/bootstrap-and-iac/feature.md:202-203`; `apps/desktop-notifier/src/daemon.ts:38-42`
+
+Three places now state, as measured fact:
+
+> *"…heap retention does not diverge because the call is in tail position."*
+
+Measured (table above): it diverges linearly and without bound at **~97 bytes/tick** — 9.4 MB over
+100 000 ticks, 37.5 MB over 400 000. This matters most in `CLAUDE.md`, because there the sentence is the
+stated **justification for having no test**, sitting directly under the rule *"a long-running loop must
+not chain each iteration's promise to the next."* A future contributor who reads "heap retention does not
+diverge" has been handed the argument that the banned shape is harmless — which is the opposite of the
+lesson the paragraph exists to teach, and it is the only place in this repo that rule is written down.
+
+Meanwhile `daemon.ts:38-42` — untouched since the R1 round — still asserts the framing the agent's own
+dispute retracts:
+
+```
+ * would chain every tick's promise to the next … so one pending promise and one async frame (each
+ * closing over the whole dependency set) would be retained per tick, forever.
+```
+
+The frame and its captures are **not** retained (measured: fattening the per-tick state by 800 B moves
+the leak by zero). So the repo now carries two mutually inconsistent accounts of the same phenomenon,
+each wrong in a different direction, and neither matches the measurement.
+
+**Proposed fix** — one sentence in each of the four sites, saying the same true thing:
+
+> The closed-over state *is* collected (the recursive call is in tail position), but the chain of
+> pending promise objects is not: measured at ~97 bytes/tick, linear and unbounded — ~280 KB/day at the
+> 30 s default, ~8 MB/month, for the life of the process. Cheaper than "an async frame per tick", but
+> not free, and it never stops growing.
+
+`NOW.md`'s entry is append-only history and correctly records what was believed at the time; leave it,
+or append a correction as a new entry rather than editing it.
+
+#### R3-4. MINOR — the R2-1 follow-up row names the weakest trigger and omits the one the dependent plans actually specify
+
+`.agents/plans/bootstrap-and-iac/feature.md:178`; `.agents/plans/github-integration/github-event-mapping.md:75,211`
+
+The row's concrete example is *"a producer stamping one batch with a single `toISOString()` and
+PutObject-ing sequentially"* — which reads as a coincidence a reader would rate low-probability. The
+stronger trigger is already written down in a dependent plan and is not mentioned:
+
+> `github-event-mapping.md:75` — *"the **notification** path uses `updated_at` from the object."*
+> `github-event-mapping.md:211` — *"validate `NotificationSchema`, `timestamp = updated_at`…"*
+
+GitHub's notification `updated_at` is **second-precision** (`2026-07-19T20:39:12Z`). Normalised into the
+contract's mandatory `.000` fraction, every notification in a batch that shares a second shares a
+millisecond — so same-instant siblings are the *norm* for the first planned producer, not a coincidence,
+and the loss then needs only a poll landing mid-batch. `claude-code-integration/feature.md:123` already
+independently anticipates *"machine clock skew on the timestamp key"*, i.e. route (b).
+
+This is a record-accuracy finding, not a code one: the mechanism is described correctly and completely,
+and `packages/event-model/README.md` § *"Key order is not write order"* puts the warning exactly where a
+producer implementer will meet it, with a pointer to this row. Only the **likelihood** is understated,
+and likelihood is what a reader triages a follow-up by.
+
+**Proposed fix:** one clause in the row's (a) — *"…and, more commonly, when the producer's upstream
+timestamp is second-granular: AWE-154's resolved mapping decision sets `timestamp = updated_at` from the
+GitHub Notifications API, whose values carry no fractional part, so a batch sharing a second becomes a
+batch sharing a millisecond."* Do **not** implement the lookback window here; the deferral is correct
+and correctly reasoned.
+
+#### R3-5. NIT — the story files' R1-fix sections were not reconciled with the R2 round, and three claims have gone stale
+
+| Site | Claim | Reality |
+| :--- | :--- | :--- |
+| `feature.md:135` | *"173 specs green, verified uncached with `--force`"* | **182** passed / 5 skipped, measured with `--force` on all four tasks |
+| `desktop-notifier-daemon.md:306` | *"Spec count rose 60 → 86 passing (91 including the five opt-in specs)"* | **95 passing / 100 total** after the R2 round added the probe and vocabulary specs. R2-10 corrected this number once; it has drifted again |
+| `desktop-notifier-daemon.md:319` | the loop fix is *"now guarded by a `ticking` flag plus a new spec asserting ticks settle independently"* | that spec was **renamed and its claim retracted** by the R2-4 disposition — this sentence now asserts a guarantee the branch deliberately decided it cannot provide |
+| `desktop-notifier-daemon.md:338-341` | *"the accepted `env` set adds `local` to `.agents/guidance/logging.md`'s four"* | superseded by the one-vocabulary carve-out, which also changed `stage` → `staging` |
+
+Separately, `infra-s3-and-dns.md` carries **no record of the R2 round at all** — the module `validation`
+blocks and the `env` validation lifted into `bootstrap` are AWE-151 changes that live only in
+`feature.md`'s R2 section and `NOW.md`. `feature.md` is a legitimate altitude for *dispositions*, but a
+reader opening the story to see what happened to its Terraform will not find it.
+
+Under-claiming rather than over-claiming, so nothing here is dishonest — but these files are the merge's
+audit trail, R1 corrected four claims in them and R2 corrected two more, and each round has left the
+previous round's sections un-reconciled.
+
+**Proposed fix:** update the four numbers/claims above, and add a short `## R2 review fixes` section to
+`infra-s3-and-dns.md` (and optionally `desktop-notifier-daemon.md`) mirroring the R1 ones. Better still,
+stop restating counts in prose and say *"see the `## Execution status` table"*.
+
+#### R3-6. NIT — `index.ts:50` is a fall-through `if` the carve-out does not cover, introduced by the commit that fixed R2-9
+
+`apps/desktop-notifier/src/index.ts:50-56`
+
+```ts
+if (bucket._tag === "BucketProbeInconclusive") {
+  logger.warn("Could not confirm the event bucket; …", { … })
+}
+```
+
+`CLAUDE.md` scopes the exemption precisely: *"This exemption covers guards that return or throw
+immediately, nothing more."* This one logs and continues. It is the only such site left in the diff — I
+walked all ten `if` statements in `src/`; the other nine either return/throw immediately or already carry
+an `else`. Commit `d2a9198` fixed R2-9's instance in `daemon.ts:67` and created this one in the same
+commit, which is the third consecutive round in which this rule has eroded in the newest code (R1 #19 →
+R2-9 → here).
+
+**Proposed fix:** the same two-branch form used at `daemon.ts:67-73`, or hoist it into a named predicate.
+
+#### R3-7. NIT — `newer_noncurrent_versions_kept >= 0` admits `0`, which S3 rejects, against the module's own stated contract
+
+`infra/modules/hardened-bucket/variables.tf:52-55`
+
+The module header states the contract plainly: *"every input is validated here rather than at apply time
+against real AWS — a bad value should fail `terraform validate`, not leave a half-created bucket."*
+`newer_noncurrent_versions >= 0` lets `0` through, and the AWS provider documents
+`newer_noncurrent_versions` as *must be a non-zero positive integer* (S3's valid range is 1–100).
+
+Verified offline — a scratch root in a temp directory calling the real module with
+`newer_noncurrent_versions_kept = 0`:
+
+```
+$ terraform validate
+Success! The configuration is valid.
+```
+
+No AWS call, nothing applied. Both real call sites pass 5 and 20, so nothing is broken today; it is one
+value short of the contract the module advertises. The upper bound (100) is also unenforced.
+
+**Proposed fix:** `condition = var.newer_noncurrent_versions_kept >= 1 && var.newer_noncurrent_versions_kept <= 100 && floor(…) == …`.
+
+---
+
+### Residual risk carried into the integration branch
+
+**R2-1 is the one known-unfixed defect, and it is adequately recorded.** Judged against "would a future
+implementer reading only these files understand the hazard", the answer is yes, in four places that
+compound rather than duplicate:
+
+- `poller.ts:3-23` — the normative statement, now accurate on both counts it previously inverted, and it
+  goes further than R2 asked by explaining why `LastModified` is not simply the safer swap.
+- `poller.spec.ts:42-68` — a labelled characterization suite pinning **both** loss routes, so the
+  follow-up fix must turn them red and update them consciously rather than discovering the gap.
+- `packages/event-model/README.md` § *"Key order is not write order"* — the highest-value placement,
+  because every producer imports this package, and it points at `feature.md` § Follow-up candidates.
+- `feature.md:178` — the disposition, with the proposed fix (lookback window + delivered-key set), the
+  reason for deferral (it is the same product decision as #12), and an explicit *"deliberately not
+  implemented on this branch"*.
+
+No overclaiming was found anywhere: nothing says the loss window is closed, nothing says the mark is
+write-ordered, and the `advanceMark` docblock explicitly hands the reader back to the module docblock.
+The single gap is the **likelihood** framing (**R3-4**), which matters because the batch-write shape that
+triggers it is not hypothetical — it is written into `github-event-mapping.md`'s resolved decisions.
+
+Follow-ups **#11, #12, #15, #20** are each recorded with an accurate description and a stated reason for
+deferral; I re-confirmed #11's premises still hold and did not find any of the four mischaracterised.
+#12 and R2-1 correctly share one open product question rather than being filed as two engineering tasks.
+
+### Honesty and fence audit
+
+**Fence: clean.** No `terraform apply` was executed and nothing in the diff records one having been. No
+`*.tfstate`, `*.tfplan`, `backend.hcl`, or `.terraform/` is tracked, and `.gitignore` covers all of them
+while correctly keeping `.terraform.lock.hcl`. Every `terraform apply` string in the diff is a runbook
+step, a deferred-verification command, or the `deploy` npm script. No credentials, keys, `AKIA`/`ASIA`
+prefixes, `.env`, `.claude/`, or `AGENTS.md`. `.gitignore` ignores the AI-config symlink trees while
+leaving `.agents/plans/` tracked, and `CLAUDE.md` is deliberately not ignored — both per the user's
+staging rules. The statement that **no NS records were written into the live
+`fifthdimensionengineering.com` zone** is consistent with every artefact in the diff. Working tree clean,
+no upstream configured, no remote ref contains the tip: **nothing pushed.**
+
+**Plan-file accuracy.** Every `## Deferred verification` row in both stories is accurate and correctly
+scoped; the `-chdir` corrections are right and the commands are copy-pasteable; "What WAS verified
+locally" still correctly separates what ran against the built daemon from what ran in the unit suite. The
+`Plan: 8 to add, 0 to change, 0 to destroy` claim remains consistent — the R2 round added only
+`validation` blocks, which change no resource. The acceptance-criteria table is accurate except for the
+spec count (**R3-5**). The ADR's three-file structure, revision log and state-changes table conform to
+`.agents/guidance/adr.md`, and neither R2 change altered the decision, so no new revision entry is owed.
+
+**Statuses conform to `planning-artifacts.md` §3.** AWE-149 and AWE-150 `Completed`; **AWE-151 and
+AWE-152 `Implementation Adjustment`** — correctly non-terminal, because the fence blocks their live
+verification and the guidance's `Completed` transition is *"verified & merged"*. `feature.md` is
+`Implementing`, which is what the command-driven rule produces while any child is non-terminal, and the
+file states the reason explicitly rather than leaving it to be inferred. The invariant *"never leave a
+feature `Completed` while it owns a non-terminal story"* holds.
+
+### What was checked and found clean (beyond R1's and R2's lists)
+
+- **The `BucketProbeInconclusive` branch is correct at the boundary**, not just in the happy path: a
+  status of `undefined` (transport), `>= 500`, or a 4xx not in `bucketFailuresByStatus` (e.g. a 400) all
+  land inconclusive, so only the three statuses that genuinely answer *"does this bucket exist here"*
+  can kill the process. `bucketFailuresByStatus` remains correctly `Partial` over an open key set.
+- **The `dependenciesFor` options-object refactor** removed both hand-rolled `DaemonDependencies`
+  literals R2 flagged; every spec now routes through one fixture, and the renamed loop spec gained a real
+  second assertion (no further polls after the loop resolves) rather than only losing its false one.
+- **`seedMark` interacts correctly with `StartAfter`.** It emits a bare instant, so a key written in the
+  same millisecond as the seed sorts *above* it and is still delivered — the loss-avoiding side to err
+  on. Worth knowing, since it is the one place the mark is not a full key.
+- **The `p(\d)` / `priorityBounds` seam.** `Priority` is 1–8 and the key captures one digit, so `p0`/`p9`
+  are structurally matched and rejected by the schema with the range message rather than as a shape
+  error — which is what the docblock claims. It would break if the range ever exceeded one digit; the
+  comment already owns that trade.
+- **Guidance sweep.** No accumulator loops (re-walked every iteration site against `looping.ts`,
+  including `parseRecords` and the new `dependenciesFor`); no enums, no `function`, no trailing
+  semicolons, explicit return types throughout; every fallible function returns `Either` or a tagged
+  union; largest source file is `notify.ts` at 125 lines; `Record` lookups everywhere a discriminator is
+  branched on; Gather/Compute/Persist still visible at module level; logging still conforms to
+  `logging.md` (per-destination serialization, `env`/`service`/`timestamp` in `defaultMeta`, splat on the
+  console line only, every failure log naming the offending value).
+- **Terraform.** `fmt -check -recursive` and `validate` clean for all three modules; the module is
+  behaviourally equivalent to the pre-refactor roots (re-derived independently); `dynamic "rule"` on
+  `length(var.transitions) > 0` correctly emits nothing for the bootstrap bucket; the `depends_on` from
+  the lifecycle configuration to versioning is the right fix for plan flapping; provider inheritance and
+  `default_tags` flow correctly into the child module; the destroy-order warning (NS record before child
+  zone) and `force_destroy = false` on both buckets are the right defaults for a permanent event log.
+- **The event-model contract.** All exemplars carry three-digit fractions; `event.spec.ts:43-65` asserts
+  lexicographic order equals chronological order *and* that every accepted instant has the same length;
+  `event-key.spec.ts` pins injectivity, the `eventType` message, and `p05` rejection. `WorkItemUrl` is
+  identity-encoding and nothing downstream assumes a `URL` instance.
+
+### Suggested merge gate
+
+**Nothing blocks the merge.** Fix **R3-1** (one line, and it restores a gate this review is defined by),
+**R3-2** (one line, and the README currently tells users to set a value that refuses to start),
+**R3-3** (four sentences, and it is the only written statement of a rule the project cannot test), and
+**R3-4** (one clause, and it is the difference between a follow-up a reader triages as unlikely and one
+they triage as scheduled). **R3-5 to R3-7** are housekeeping and can ride along or follow.
+
+Two questions remain genuinely open for the user and should not be answered by an implementer:
+**delivery semantics** (#12 and R2-1 — at-most-once vs retry vs quarantine, and how wide a lookback
+window), and the **environment-vocabulary deviation** from `logging.md`. Both are correctly flagged as
+awaiting a ruling rather than silently decided.

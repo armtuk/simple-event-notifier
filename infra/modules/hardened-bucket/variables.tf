@@ -50,8 +50,8 @@ variable "newer_noncurrent_versions_kept" {
   type        = number
 
   validation {
-    condition     = var.newer_noncurrent_versions_kept >= 0 && floor(var.newer_noncurrent_versions_kept) == var.newer_noncurrent_versions_kept
-    error_message = "newer_noncurrent_versions_kept must be a non-negative whole number."
+    condition     = var.newer_noncurrent_versions_kept >= 1 && var.newer_noncurrent_versions_kept <= 100 && floor(var.newer_noncurrent_versions_kept) == var.newer_noncurrent_versions_kept
+    error_message = "newer_noncurrent_versions_kept must be a whole number between 1 and 100; S3 rejects 0 and caps the count at 100."
   }
 }
 

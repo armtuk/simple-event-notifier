@@ -14,19 +14,25 @@
       "inputs": ["src/**", "exemplars/**", "tsup.config.ts", "tsconfig.json", "package.json"],
       "outputs": ["dist/**"]
     },
+    // `*.config.ts` is here because each package's tsconfig `include` lists it, so `tsc --noEmit`
+    // genuinely checks `tsup.config.ts`/`vitest.config.ts`; `package.json` because a dependency
+    // version bump changes the types being checked against.
     "typecheck": {
       "dependsOn": ["^build"],
-      "inputs": ["src/**", "types/**", "tsconfig.json"],
+      "inputs": ["src/**", "types/**", "*.config.ts", "tsconfig.json", "package.json"],
       "outputs": []
     },
+    // `**/*.tf` is here because @personal-events/infra#lint is `terraform fmt -check -recursive .`
+    // and `infra/` has no `src/`: without it the task's resolved input set was `package.json` alone,
+    // so `pnpm lint` replayed a cached PASS over HCL that `terraform fmt` rejects.
     "lint": {
       "dependsOn": [],
-      "inputs": ["src/**", "biome.json"],
+      "inputs": ["src/**", "**/*.tf", "biome.json"],
       "outputs": []
     },
     "test": {
       "dependsOn": ["^build"],
-      "inputs": ["src/**", "exemplars/**", "vitest.config.ts"],
+      "inputs": ["src/**", "exemplars/**", "vitest.config.ts", "package.json"],
       "outputs": []
     },
     "plan": {
