@@ -1,0 +1,26 @@
+{
+  "name": "@personal-events/placeholder",
+  "version": "0.0.1",
+  "description": "Temporary workspace member that makes the build/lint/test pipeline real. Removed by AWE-150.",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "lint": "biome check src/",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "catalog:",
+    "@types/node": "catalog:",
+    "tsup": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

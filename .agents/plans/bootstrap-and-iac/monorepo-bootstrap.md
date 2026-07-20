@@ -2,12 +2,12 @@
 id: AWE-149
 title: Monorepo & tooling bootstrap
 type: story
-status: Pending
+status: Completed
 parent: ./feature.md
 branch: feat/bootstrap-and-iac
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-28
-updated: 2026-06-28
+updated: 2026-07-19
 ---
 
 # Story: Monorepo & tooling bootstrap
@@ -207,3 +207,29 @@ Execute in order. Each is independently validatable.
 - Level 3 — Build & unit: `pnpm turbo run build && pnpm turbo run test`
 - Level 4 — Manual: from a clean clone, `pnpm install && pnpm build && pnpm lint && pnpm test`
   all succeed; `pnpm turbo run build` a second time reports cache hits.
+
+## Execution notes (2026-07-19)
+
+Plan-refresh deltas against the environment as executed, and decisions taken while building:
+
+- **pnpm pinned to `10.17.0`, not `^11`.** The installed CLI is pnpm 10.17.0; `packageManager`
+  matches it so corepack does not fight the local install. `catalog:` + `catalogMode: strict`
+  are available in 10.x, so the catalog design in the plan is unchanged.
+- **Resolved versions:** turbo 2.10.5, typescript 6.0.3, tsup 8.5.1, biome 2.5.4, vitest 4.1.10,
+  @types/node 24.13.3 (held at the 24 major to match the Node 24 runtime), Terraform CLI 1.15.7.
+- **`onlyBuiltDependencies: [esbuild]`** added to `pnpm-workspace.yaml` — pnpm 10 blocks
+  postinstall scripts by default and tsup's esbuild binary needs its install script.
+- **biome:** `linter.rules.recommended` is deprecated in 2.5 → migrated to `"preset": "recommended"`
+  via `biome migrate`. Added `noEnum: "error"` (encodes the no-enums guidance) and a
+  `json.formatter.expand: "auto"` override so `expand: "never"` does not collapse every
+  `package.json` onto one line. `infra/**` and the `.agents/`/`.claude/` symlink trees are excluded.
+- **Per-package `tsconfig.json` is `noEmit: true`** with no `rootDir`/`outDir`: tsup owns emit
+  (JS + dts), tsc is typecheck-only. Setting `rootDir: src` conflicted with including
+  `*.config.ts` in the program (TS6059).
+- **`turbo.json` `test.outputs` is `[]`** — coverage is a root-only concern in this setup, and a
+  non-empty `outputs` made turbo warn that no output files were produced.
+- **`CLAUDE.md` added** documenting the guidance rules biome cannot enforce (no accumulator
+  loops, G-C-P separation, slice-don't-dump, result types, `Record` lookups) plus the
+  `rewriteRelativeImportExtensions` deviation from the literal TS guidance.
+- `packages/_placeholder` exists only to make the pipeline real; **AWE-150 removes it** once
+  `@personal-events/event-model` is the first genuine member.
