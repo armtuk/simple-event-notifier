@@ -1,4 +1,4 @@
-import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3"
+import { GetObjectCommand, HeadBucketCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3"
 
 /**
  * A stand-in for `S3Client` backed by an in-memory key→body map. Test-support only.
@@ -31,6 +31,10 @@ export const createFakeS3 = ({ objects, pageSize = 1000, failWith }: FakeS3Optio
     if (command instanceof ListObjectsV2Command) {
       requests.push(`list:${command.input.StartAfter ?? ""}`)
       return listPage(objects, command.input.StartAfter, command.input.ContinuationToken, pageSize)
+    }
+    if (command instanceof HeadBucketCommand) {
+      requests.push(`head:${command.input.Bucket ?? ""}`)
+      return {}
     }
     if (command instanceof GetObjectCommand) {
       const key = command.input.Key ?? ""

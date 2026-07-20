@@ -1,17 +1,16 @@
 import { createLogger, format, type Logger, transports } from "winston"
+import type { DeploymentEnv, LogLevel } from "./config.ts"
 
 /**
  * The default application logger per `.agents/guidance/logging.md`: one well-formed JSON object
  * per line to the logfile (the machine-consumed record), and a readable single line to the
  * console (the developer-facing view). Serialization is a per-destination concern over a shared
  * preprocessing step.
+ *
+ * `env` and `level` arrive already narrowed to their closed sets by `config.ts`, so there is no
+ * coercion here — an unrecognized value fails configuration rather than silently becoming `dev` or
+ * a level winston ignores.
  */
-
-const deploymentEnvs = { dev: "dev", qa: "qa", stage: "stage", prod: "prod" } as const
-
-type DeploymentEnv = (typeof deploymentEnvs)[keyof typeof deploymentEnvs]
-
-const deploymentEnvByName: Partial<Record<string, DeploymentEnv>> = deploymentEnvs
 
 const serviceName = "desktop-notifier"
 
@@ -27,23 +26,20 @@ const consoleFormat = format.printf((info): string => {
 })
 
 export interface LoggerOptions {
-  readonly level: string
-  readonly env: string
+  readonly level: LogLevel
+  readonly env: DeploymentEnv
   readonly logFile?: string
 }
 
 export const createDaemonLogger = ({ level, env, logFile }: LoggerOptions): Logger =>
   createLogger({
     level,
-    defaultMeta: { env: resolveEnv(env), service: serviceName },
+    defaultMeta: { env, service: serviceName },
     format: baseFormat,
     transports:
       logFile === undefined
         ? [new transports.Console({ format: consoleFormat })]
         : [new transports.Console({ format: consoleFormat }), new transports.File({ filename: logFile, format: format.json() })]
   })
-
-/** Anything unset or unrecognized resolves to dev rather than guessing a higher environment. */
-const resolveEnv = (value: string): DeploymentEnv => deploymentEnvByName[value] ?? deploymentEnvs.dev
 
 const formatMeta = (value: unknown): string => (typeof value === "object" && value !== null ? JSON.stringify(value) : String(value))

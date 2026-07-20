@@ -4,7 +4,7 @@ import { type DaemonConfig, parseConfig } from "./config.ts"
 import { runDaemon, type TickState } from "./daemon.ts"
 import { createDaemonLogger, type LoggerOptions } from "./logger.ts"
 import { createNotifier } from "./notify.ts"
-import { createS3Client, probeCredentials } from "./s3-client.ts"
+import { createS3Client, probeBucket, probeCredentials } from "./s3-client.ts"
 import { type LoadStateResult, loadState, seedMark } from "./state.ts"
 
 /**
@@ -30,6 +30,18 @@ const start = async (config: DaemonConfig): Promise<number> => {
     logger.error("No usable AWS credentials; the daemon cannot poll the event bucket", {
       region: config.region,
       reason: credentials.message
+    })
+    return 1
+  }
+
+  // Pre-flight the bucket per .agents/guidance/aws.md: a typo'd EVENT_BUCKET must fail at startup,
+  // not become a process that backs off forever while looking healthy.
+  const bucket = await probeBucket(s3, config.bucket)
+  if (bucket._tag === "BucketUnreachable") {
+    logger.error("The event bucket does not exist or is not reachable; refusing to start", {
+      bucket: config.bucket,
+      region: config.region,
+      reason: bucket.message
     })
     return 1
   }

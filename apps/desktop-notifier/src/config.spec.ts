@@ -36,6 +36,26 @@ describe("parseConfig", () => {
   it.each(["auto", "toasted", "shell"])("accepts the %s notifier", value => {
     expect(Either.getOrThrow(parseConfig({ ...baseEnv, NOTIFIER: value })).notifier).toBe(value)
   })
+
+  it.each(["local", "dev", "qa", "stage", "prod"])("accepts the %s environment", value => {
+    expect(Either.getOrThrow(parseConfig({ ...baseEnv, ENV: value })).env).toBe(value)
+  })
+
+  it("refuses to start on a mistyped ENV rather than silently stamping every log record as dev", () => {
+    const error = Either.getOrThrow(Either.flip(parseConfig({ ...baseEnv, ENV: "production" })))
+    expect(error).toContain("env")
+    expect(error).toContain("production")
+  })
+
+  it.each(["error", "warn", "info", "debug"])("accepts the %s log level", value => {
+    expect(Either.getOrThrow(parseConfig({ ...baseEnv, LOG_LEVEL: value })).logLevel).toBe(value)
+  })
+
+  it("refuses to start on a log level winston does not know, rather than running silently", () => {
+    const error = Either.getOrThrow(Either.flip(parseConfig({ ...baseEnv, LOG_LEVEL: "verbse" })))
+    expect(error).toContain("logLevel")
+    expect(error).toContain("verbse")
+  })
 })
 
 describe("defaultStateFile", () => {

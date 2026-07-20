@@ -43,12 +43,21 @@ node apps/desktop-notifier/dist/index.js
 | `MAX_BACKOFF_MS` | `300000` | ceiling for the error backoff |
 | `STATE_FILE` | `$XDG_STATE_HOME/personal-events/desktop-notifier.json` | where the high-water mark is persisted |
 | `NOTIFIER` | `auto` | `auto` (toasted-notifier, falling back to a shell command), `toasted`, or `shell` |
-| `LOG_LEVEL` | `info` | winston level |
+| `LOG_LEVEL` | `info` | one of `error`, `warn`, `info`, `debug` |
 | `LOG_FILE` | unset | when set, JSON logs are also written here |
-| `ENV` | `dev` | stamped on every log record |
+| `ENV` | `dev` | one of `local`, `dev`, `qa`, `stage`, `prod`; stamped on every log record |
 
-Credentials come from the standard AWS provider chain and are probed once at startup, so a
-misconfigured machine fails immediately with one clear line.
+`NOTIFIER`, `LOG_LEVEL` and `ENV` are closed sets and an unrecognized value **fails startup** rather
+than being silently coerced — `ENV=production` stamping every record as `dev`, or `LOG_LEVEL=verbse`
+leaving the daemon running and emitting nothing, are worse than a refusal to start.
+
+Startup runs two pre-flight probes before the first poll, so a misconfigured machine fails
+immediately with one clear line instead of looking healthy forever:
+
+1. **Credentials** — resolved through the standard AWS provider chain.
+2. **The bucket** — a `HeadBucket`, per `.agents/guidance/aws.md` § S3 § Usage in Code. A 404, 403
+   or region mismatch is translated into what to actually fix, because `HeadBucket` answers with a
+   bodyless response whose SDK rendering is a bare `UnknownError`.
 
 ## Behaviour worth knowing
 
@@ -58,6 +67,12 @@ misconfigured machine fails immediately with one clear line.
   so one bad object cannot wedge the daemon or block the events behind it.
 - **A restart does not re-notify.** The mark is written temp-then-`rename` in the same directory,
   so it is atomic on POSIX.
+- **Shutdown finishes the tick it is in.** `SIGINT`/`SIGTERM` between ticks stops immediately;
+  arriving mid-tick it lets that tick raise its notifications and persist its mark first, so those
+  events are not re-delivered on the next start.
+- **Ticks settle independently.** Each tick is scheduled from the previous tick's timer callback
+  rather than `await`ed recursively — chaining every tick's promise to the next would retain one
+  pending promise and one async frame per tick for the life of the process.
 - **`toasted-notifier` is isolated, and on macOS + pnpm it does not actually work.** Its bundled
   `terminal-notifier` helper arrives without its executable bit (the package has no postinstall to
   set it), so every call fails `EACCES`. The `auto` notifier absorbs this: it falls through to the
