@@ -586,3 +586,194 @@ correct — the docs over-claimed).
 
 Nothing disputed. Full uncached `build`/`lint`/`test`/`typecheck` green (610 specs); Level 0 intact
 (event-model 92, desktop-notifier 92+5); `terraform fmt`/`validate` clean on both roots.
+
+---
+
+## R3 — 2026-07-21 (final gate)
+
+Reviewer: independent R3 (did not write the code; is neither R1 nor R2). This is the last review
+before merge. Scope: the whole feature diff `auto/execute-remaining-bootstrap-github..github-integration`
+(13 commits), read against `.agents/**`, `CLAUDE.md`, and the feature's plan files, with the deepest
+independent pass on the two highest-risk surfaces the brief names — the `producer`/`eventId` contract
+change and the Railway→Lambda re-architecture — plus a full audit of every R1 and R2 disposition.
+
+### Verification actually run by the reviewer (all green, matches the claim exactly)
+
+| Command | Result |
+| :--- | :--- |
+| `pnpm install` | clean |
+| `pnpm build --force` | 7/7 tasks (exit 0) |
+| `pnpm lint --force` | 8/8 tasks (incl. `infra` → `terraform fmt -check`) (exit 0) |
+| `pnpm test --force` | **610 passed / 5 skipped** across 13 test tasks (exit 0) |
+| `pnpm typecheck --force` | 12/12 tasks (exit 0) |
+| `terraform fmt -check -recursive infra` | clean (exit 0) |
+| `terraform validate` (bootstrap + personal-events) | Success / Success |
+
+Per-package: event-model **92**, event-sink 29, integration-core 68, desktop-notifier **92 (+5
+skipped)**, github 135, github-poller 89, webhook-ingest 105 = 610. **Level 0 is intact** — event-model
+92 and desktop-notifier 92+5 are exactly the claimed counts; the contract change that touched
+`event-model` and the env-vocab change that touched `desktop-notifier/src/config.*` did not regress
+either. (`terraform plan` itself needs live AWS creds and is outside the fence; `validate` + the R1/R2
+scratch-plan of `41 to add` is the honest ceiling here, and the deferred table says so.)
+
+### JOB 1 — the R2 fixes hold; R2-1's idempotence claim is correctly scoped in the three named files
+
+Read `README.md`, `event-key.ts`, and `event.ts` independently. The idempotence guarantee is now
+**correctly scoped** in all three and they agree with the code and with each other:
+- `event-key.ts:19-27` — "A content-timestamped producer … rebuilds an identical key … The **webhook**
+  handler stamps a wall-clock `timestamp` … so its redelivery gets a different `{timestamp}` and thus a
+  different key — a duplicate, which the `X-GitHub-Delivery` dedupe store, not the key scheme, is what
+  prevents."
+- `event.ts:97-107` — same, and explicitly "its dedupe store — **not** this field — is what prevents
+  duplicate history."
+- `README.md:65-82` — "**Re-delivery is idempotent — but only for a content-timestamped producer**" and
+  "For the webhook path the `X-GitHub-Delivery` dedupe store is **not** an optimisation … must not be
+  dropped."
+
+The redelivery-duplicate mechanism the scoping rests on is real and I traced it end to end: webhook
+`timestamp = deps.now()` (`register.ts:53`, re-read per delivery) leads the key; on the narrow window
+where `putEvents` succeeded but `dedupe.record` then threw, the exception propagates through
+`persist → ingest → handle` to `createIngestHandler`'s `.catch` → **500** → GitHub redelivers →
+`dedupe.seen` is false → a **new** `receivedAt` → a **different** key → a duplicate. So the dedupe store
+is genuinely load-bearing (and therefore **not** droppable), exactly as the docs now say. **The dedupe
+store's own failure semantics are correct**: `DeliveryDedupeRepository.seen` returns `false` only on a
+404/`NotFound`/`NoSuchKey` and **rejects** (→ 5xx) on any other error, so a transient S3 blip cannot let
+a redelivery through as a duplicate. R2-2..R2-6 all verified fixed (`event.ts` producer docblock points
+at `toDotSafe`; `toEventId` non-injectivity noted; `s3-event-repository.ts:9` "scheduled poller
+Lambda"; `turbo.json` "Lambda zip"; the poller plan's "What WAS verified" is 89 specs with the
+deleted-daemon evidence relabelled superseded history).
+
+**One residual of the R2-1 correction survives (finding R3-1, minor).** R2 fixed the three canonical
+files but did not sweep the wider tree, and three *sibling* sites still assert the un-scoped
+webhook-is-idempotent claim the README now refutes: a spec **name** at
+`packages/github/src/normalizer.spec.ts:33` ("… eventId to the delivery id, **so a redelivery is
+idempotent**", over a body that only checks `producer`/`eventId` values), the `content-hash.ts:6-7`
+docblock (cites **`X-GitHub-Delivery`** — the webhook — as an id that "makes a real re-delivery
+idempotent"), and `adr-revision-log.md:55` ("… no longer collide **and a re-delivery is idempotent**").
+Behaviour is correct and the authoritative contract docs are right; this is doc/spec-name truth only.
+
+### JOB 2 — the contract change: independently injective and collision-safe, with a real safety net
+
+I did not lean on R2 here. The codec `{timestamp}.{type}.p{priority}.{source}.{name}.{producer}.{eventId}.json`
+is injective: the timestamp group is fixed-width, priority is a **single** digit (`p05`≠`p5` can't
+alias), and every middle segment is `[^.]+` separated by literal dots, so the seven-way split is
+unambiguous. **I could not construct two distinct valid events that collide on one key, nor a key that
+decodes to the wrong components** — a mangled key deviates from the fixed 7-token structure and is
+**rejected** by `parseKey`, never silently mis-decoded. I verified the encode-before-`buildKey` safety
+net empirically against the built package: a dotted `producer` or `eventId`, or an empty `eventId`,
+fails `encodeEventJson` (`Left`) **before** `buildKey` is reached (because `toEventObject` is
+`Either.map(encodeEventJson(event), … buildEventKey(event))` and `Either.map` short-circuits on `Left`);
+a hand-built key from a dotted producer is `Left` on `parseKey`. The net is **structurally
+unavoidable**: `buildEventKey` has exactly one caller (`encode-events.ts:30`), and all three write paths
+(webhook `github-integration.ts:121`, poller `source-cycle.ts:103`) funnel through
+`S3EventRepository.putEvents → toEventObjects` — there is no second key-builder. Both GitHub producers
+set dot-free values and `toEventId`/`toDotSafe` strip dots/whitespace defensively; the webhook refuses
+an empty delivery id (`github-integration.ts:66`). The **notification compound seen-key** (`id:updated_at`)
+is consistent with the key scheme (`updated_at`→timestamp segment, `id`→eventId segment), so a thread's
+successive states stay distinct rather than collapsing. `event-key.spec.ts` is strongly discriminating
+(the eventId-distinctness test, a 9-case malformed table, injective re-encode over 3 keys, and a
+forward-looking `claude-code` key that round-trips). **Level 0's desktop-notifier handles the longer
+keys**: its poller treats keys as opaque strings for a whole-key high-water mark and parses bodies via
+`parseEvent`, so the extra segments are invisible to it (and its 92 specs still pass).
+
+### JOB 3 — the re-architecture: coherent, single-writer, cursor-safe
+
+`reserved_concurrent_executions = 1` is set (`github-poller.tf:34`); `pollOnce` loads state **once** and
+saves **once**, threading it through `reduce` so the two sources run strictly sequentially — so within
+an invocation there is no concurrency and across invocations two cannot overlap, and the single combined
+state object is safe (R1-4 genuinely mooted). **The cursor cannot advance past unwritten events**:
+`onItems` returns the *unchanged* `state` on `PutEventsFailure`; `onFailure`/`onRateLimited`/
+`onNotModified` never advance the cursor either. Conditional-request state (`etag`/`lastModified`/`since`)
+persists in the `SourceCursor` and `nextCursor` only ever *widens* it (a 200 without the header keeps the
+prior value), so the ETag model is correct across stateless invocations. `X-Poll-Interval`/`Retry-After`
+become a `notBefore` honoured by `isDue`. Rate-limit handling correctly distinguishes a throttle (429, or
+403 with `x-ratelimit-remaining: 0`/`retry-after`) from a genuine 403 permission failure. The bounded
+seen-set is safe (re-emit is an idempotent same-key overwrite). **Terraform is coherent**: EventBridge
+rule + target + `aws_lambda_permission` (`events.amazonaws.com`, `source_arn` = rule ARN); the IAM
+**role** is least-privilege (PutObject on the event log, Get/Put on the single state key, `ListBucket`
+with **no condition** per the R1-7 fix, `GetParameter` on exactly the two PAT ARNs, own log group only);
+the webhook role stays PutObject-only + a delivery-marker-prefix grant — and the webhook composition does
+**not** probe the bucket, so its lack of `ListBucket` is correct, not a gap. The `## Deferred verification`
+table is honest and Lambda-shaped (`terraform apply`, `aws lambda invoke`, `get-function-concurrency`,
+EventBridge — **no `railway up`**), and it carries the precise R1-8 row ("404 from our handler … not a
+bare 403").
+
+### JOB 4 — honesty & fence: clean
+
+No `terraform apply`/deploy/publish/push in the diff (every such string is documentation stating the
+fence *forbids* it); no tracked `*.tfstate`, `.terraform-artifacts/`, or zip; the branch was never pushed
+(no `origin/github-integration`); no real secrets — all three SSM params are
+`placeholder-set-me-out-of-band` with `ignore_changes = [value]`, and the NS delegation record uses the
+**computed** `aws_route53_zone.system.name_servers`, not hardcoded nameservers. The **CLAUDE.md env
+carve-out is deleted** and the replacement note is **true**: `aws.md` pins `development`/`production`, and
+all three app configs (`Schema.Literal(deploymentEnvs.development, deploymentEnvs.production)`) plus both
+Terraform roots match exactly — no new false claim. Story `status:` values conform to
+`planning-artifacts.md` §3 (`Completed` for AWE-153; `Implementation Adjustment` for the four terminal-by-
+`apply` stories; `Implementing` for the feature). The **lookback delivery fix** is a *decided* follow-up
+(`feature.md` §1 → retry-with-lookback, consumer-side, its own story) and the **DRY debt** is `feature.md`
+§4 (env vocab ×3, winston ×3, `capturingLogger`, `httpStatusOf` ×4, `run-bundle` ×2 → a proposed
+`@personal-events/app-support` story) — both recorded, neither silently dropped. `SourceAdapter` is gone
+from the exports (`Normalizer`/`SecondaryProcessor` remain); the only mentions are honest historical
+notes (`normalizer.ts:11`, the ADR body).
+
+**One stale reference the re-arch missed (finding R3-2, nit).** The AWE-157 plan's frontmatter `title:`
+and its H1 still read "GitHub activity poller — Events + Notifications **(Railway fallback)**". The
+re-arch banner explicitly disclaims only content *below* the frontmatter, so the title is undisclaimed
+and stale — `feature.md`'s own story table already names it correctly ("scheduled-Lambda fallback").
+(The `github-poller.tf:3` and iac-foundation-ADR Railway mentions are deliberate historical context, and
+NOW.md is a session log; none of those are stale claims.)
+
+### Anything R1 and R2 both missed
+
+The webhook HMAC path is sound: `verify(secret, rawBody, signature)` runs over the exact base64-decoded
+bytes (byte-exact for GitHub's valid-UTF-8 JSON), a missing signature rejects **before** any SSM read,
+the secret memo caches the *promise* and clears on failure, and order-of-operations (verify → ping →
+missing-id → dedupe → ingest → persist → record) is correct with `record` only after a durable write.
+S3 pagination in the poller uses `paginateListObjectsV2` correctly; the state repo recovers from a
+missing/malformed object as first-run. The only things surfaced are R3-1 (the R2-1 residual) and R3-2
+(the stale plan title) — both doc/name truth, neither a behavioural defect.
+
+### Verdict
+
+**No blocker. Merge-ready.** The contract change is genuinely injective and collision-safe with a
+structurally-unavoidable encode-before-key safety net; the re-arch is coherent and correctly
+single-writer with a cursor that cannot outrun a write; Level 0 is intact; the fence is clean; and every
+R1 and R2 disposition holds or is legitimately mooted. The two findings are a **minor** doc/spec-name
+truth residual of R2-1 (three sibling sites still assert the webhook is redelivery-idempotent, which the
+corrected README refutes) and a **nit** stale plan-file title — both trivial, both safely follow-up-able.
+Recommending the quick doc/name sweep before merge only because R3-1 completes a **major** prior finding
+and leaving the contract package's idempotence story internally contradictory is the kind of thing the
+next consumer author reads; it does not threaten integration and could equally ride as a follow-up.
+
+### Findings
+
+| # | Severity | Category | Where |
+| :-- | :--- | :--- | :--- |
+| R3-1 | minor | honesty | `packages/github/src/normalizer.spec.ts:33` (+ `packages/event-model/src/content-hash.ts:6-7`, `docs/decisions/2026-07-19-2130-integration-template-and-dual-path/adr-revision-log.md:55`) |
+| R3-2 | nit | honesty | `.agents/plans/github-integration/github-notifications-poller.md:3` (frontmatter `title:` + H1 line 13) |
+
+**R3-1 — the R2-1 idempotence correction was not propagated beyond the three files R2 touched.** R2-1
+correctly rescoped the "redelivery is idempotent" claim to content-timestamped producers in `README.md`,
+`event-key.ts`, and `event.ts` — stating plainly that the **webhook** path's wall-clock `timestamp`
+means a redelivery builds a *different* key (a duplicate) and its safety rests on the dedupe store. But
+three sibling sites still carry the old un-scoped claim, now in direct tension with those corrected docs:
+(1) `normalizer.spec.ts:33` — the spec **name** "sets producer to github-webhook and eventId to the
+delivery id, **so a redelivery is idempotent**", asserted over the *webhook* path, whose body only checks
+`producer`/`eventId` values (the causal clause is unbacked and false); (2) `content-hash.ts:6-7` — "Where
+a provider *does* give an id — **`X-GitHub-Delivery`**, a notification id — that id is used instead,
+because it makes a real re-delivery idempotent" (true for the notification id, false for
+`X-GitHub-Delivery`, the webhook); (3) `adr-revision-log.md:55` — "… no longer collide **and a
+re-delivery is idempotent**" (unscoped). No behaviour is wrong and `contentHashId` is used by no producer
+in this feature, so this is minor doc/spec-name truth — but a green spec named "…so a redelivery is
+idempotent" reads as a *proven* guarantee the contract's own README refutes, which is the exact
+false-claim-in-a-name class R1-3/R1-6 flagged. Fix: rename the spec to what it tests ("…so distinct
+deliveries stay distinct and the delivery is dedupable"), and qualify the `content-hash.ts` and
+`adr-revision-log.md` sentences to "idempotent **for a content-timestamped producer**; the webhook's
+wall-clock instant makes its dedupe store the guarantee" — the same scoping R2-1 already applied.
+
+**R3-2 — the AWE-157 plan's title still says "(Railway fallback)".** The `## Re-architecture` banner
+disclaims content *below* the frontmatter, so the frontmatter `title:` (line 3) and the H1 (line 13) —
+"GitHub activity poller — Events + Notifications (Railway fallback)" — are not covered and read as
+current for what is now an EventBridge-scheduled Lambda. `feature.md`'s story table already calls it
+"scheduled-Lambda fallback". Fix: retitle to "(scheduled-Lambda fallback)". Cosmetic; the banner
+immediately below removes any real ambiguity.

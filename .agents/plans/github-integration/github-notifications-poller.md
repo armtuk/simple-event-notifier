@@ -1,6 +1,6 @@
 ---
 id: AWE-157
-title: GitHub activity poller — Events + Notifications (Railway fallback)
+title: GitHub activity poller — Events + Notifications (scheduled-Lambda fallback)
 type: story
 status: Implementation Adjustment
 parent: ./feature.md
@@ -10,7 +10,7 @@ created: 2026-06-28
 updated: 2026-07-19
 ---
 
-# Story: GitHub activity poller — Events + Notifications (Railway fallback)
+# Story: GitHub activity poller — Events + Notifications (scheduled-Lambda fallback)
 
 ## Definition
 

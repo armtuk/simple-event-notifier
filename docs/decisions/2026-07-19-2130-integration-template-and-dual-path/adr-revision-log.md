@@ -52,7 +52,9 @@ Two substantive changes and one platform change, following the R1 review and a u
 - **The overwrite collision is solved, not just recorded.** The event-model contract gained
   `producer` and `eventId`, extending the object key to
   `…{name}.{producer}.{eventId}.json` so two distinct same-second same-classification events no longer
-  collide and a re-delivery is idempotent. Made on the user's explicit approval. The "Known
+  collide and a re-delivery is idempotent for a content-timestamped producer (the poller / local
+  agents); the webhook's wall-clock instant makes its `X-GitHub-Delivery` dedupe store the guarantee.
+  Made on the user's explicit approval. The "Known
   limitations" section is rewritten accordingly; the ordering skip remains, now with a *decided*
   consumer-side lookback remedy deferred to its own story.
 - **R1 findings applied**: `SourceAdapter` (0/2 adoption) replaced by a `Normalizer` function type;

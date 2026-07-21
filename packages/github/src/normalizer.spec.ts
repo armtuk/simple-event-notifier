@@ -30,7 +30,7 @@ describe("normalizeWebhook", () => {
     })
   })
 
-  it("sets producer to github-webhook and eventId to the delivery id, so a redelivery is idempotent", () => {
+  it("sets producer to github-webhook and eventId to the delivery id, so distinct deliveries stay distinct and the delivery is dedupable", () => {
     const normalized = Either.getOrThrow(normalizeWebhook(webhook("pull_request", "webhook-pull_request-opened.json")))
     expect(normalized.producer).toBe("github-webhook")
     expect(normalized.eventId).toBe("5b1c8e40-84a1-11f1-9a3c-2b6f0e1d7c88")
