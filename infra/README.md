@@ -34,9 +34,9 @@ Do not "simplify" this by folding the state bucket into a prefix of the event bu
 Everything follows `{usage}.{env}.{system}.{domain}` from `.agents/guidance/aws.md`:
 
 - system domain — `personal-events.fifthdimensionengineering.com`
-- event bucket — `events.prod.personal-events.fifthdimensionengineering.com`
-- state bucket (Terraform) — `tfstate.prod.personal-events.fifthdimensionengineering.com`
-- operational-state bucket — `state.prod.personal-events.fifthdimensionengineering.com`
+- event bucket — `events.production.personal-events.fifthdimensionengineering.com`
+- state bucket (Terraform) — `tfstate.production.personal-events.fifthdimensionengineering.com`
+- operational-state bucket — `state.production.personal-events.fifthdimensionengineering.com`
 - webhook ingest — `hooks.personal-events.fifthdimensionengineering.com`
 
 The ingest hostname omits the `{env}` label that the bucket names carry. This is a single-environment

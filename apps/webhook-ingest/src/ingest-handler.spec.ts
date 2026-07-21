@@ -58,7 +58,7 @@ describe("the ingest handler as a router", () => {
     const { handler, log } = handlerFor({ status: "events", count: 1 })
     await handler(proxyEvent({ integration: "github", body: "{}", requestId: "abc-123" }))
     expect(log.captured.every(record => record.requestId === "abc-123")).toBe(true)
-    expect(log.captured[0]).toMatchObject({ service: "webhook-ingest", env: "dev" })
+    expect(log.captured[0]).toMatchObject({ service: "webhook-ingest", env: "development" })
   })
 
   it("records the outcome of a handled delivery", async () => {

@@ -5,13 +5,13 @@ variable "region" {
 }
 
 variable "env" {
-  description = "Deployment environment. Forms the second label of the resource naming scheme, {usage}.{env}.{system}.{domain}. Same closed set as the bootstrap root and the TypeScript daemon — see CLAUDE.md."
+  description = "Deployment environment. Forms the second label of the resource naming scheme, {usage}.{env}.{system}.{domain}. The project uses development / production per .agents/guidance/aws.md, identical to the TypeScript daemon."
   type        = string
-  default     = "prod"
+  default     = "production"
 
   validation {
-    condition     = contains(["local", "dev", "qa", "staging", "prod"], var.env)
-    error_message = "env must be one of local, dev, qa, staging, prod."
+    condition     = contains(["development", "production"], var.env)
+    error_message = "env must be one of development, production."
   }
 }
 

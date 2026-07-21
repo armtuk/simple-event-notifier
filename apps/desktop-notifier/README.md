@@ -26,7 +26,7 @@ capped at `MAX_BACKOFF_MS`, and resets on the first success.
 
 ```bash
 pnpm --filter @personal-events/desktop-notifier build
-EVENT_BUCKET=events.prod.personal-events.fifthdimensionengineering.com \
+EVENT_BUCKET=events.production.personal-events.fifthdimensionengineering.com \
 AWS_REGION=us-east-1 \
 node apps/desktop-notifier/dist/index.js
 ```

@@ -48,7 +48,7 @@ export const capturingLogger = (): CapturingLogger => {
       done()
     }
   })
-  const logger = createPollerLogger({ level: "debug", env: "dev" })
+  const logger = createPollerLogger({ level: "debug", env: "development" })
   logger.clear()
   logger.add(new transports.Stream({ stream, format: format.json(), level: "debug" }))
   return { logger, captured }

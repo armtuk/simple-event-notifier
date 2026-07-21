@@ -6,13 +6,13 @@ import { Either, ParseResult, Schema } from "effect"
  * rather than reading `process.env`, so it is unit-testable and the process boundary stays in the
  * composition root.
  *
- * `env` uses **the project's one environment vocabulary** — `.agents/guidance/aws.md`'s five values,
- * the same closed set the Terraform `env` variable validates against and the desktop notifier's
- * `ENV` accepts. The reason for the single spelling (and for `local` and `staging` being in it) is
- * recorded once, in `CLAUDE.md` § Documented carve-outs.
+ * `env` uses **the project's environment vocabulary** — `.agents/guidance/aws.md`'s `development` /
+ * `production`, the same two values the Terraform `env` variable validates against and every other
+ * app's `ENV` accepts. One spelling has to win because the same value names buckets and DNS labels
+ * on the Terraform side and stamps log records here.
  */
 
-export const deploymentEnvs = { local: "local", dev: "dev", qa: "qa", staging: "staging", prod: "prod" } as const
+export const deploymentEnvs = { development: "development", production: "production" } as const
 
 export type DeploymentEnv = (typeof deploymentEnvs)[keyof typeof deploymentEnvs]
 
@@ -23,7 +23,7 @@ export type LogLevel = (typeof logLevels)[keyof typeof logLevels]
 export const ingestConfigDefaults = {
   region: "us-east-1",
   logLevel: logLevels.info,
-  env: deploymentEnvs.prod,
+  env: deploymentEnvs.production,
   githubWebhookSecretParam: "/personal-events/github/webhook-secret",
   githubDeliveryPrefix: "deliveries/github"
 } as const
@@ -42,7 +42,7 @@ const IngestConfigSchema = /*#__PURE__*/ Schema.Struct({
   githubDeliveryPrefix: Schema.NonEmptyString,
   region: Schema.NonEmptyString,
   logLevel: Schema.Literal(logLevels.error, logLevels.warn, logLevels.info, logLevels.debug),
-  env: Schema.Literal(deploymentEnvs.local, deploymentEnvs.dev, deploymentEnvs.qa, deploymentEnvs.staging, deploymentEnvs.prod)
+  env: Schema.Literal(deploymentEnvs.development, deploymentEnvs.production)
 }).annotations({ identifier: "IngestConfig" })
 
 export type IngestConfig = typeof IngestConfigSchema.Type

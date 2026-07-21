@@ -17,7 +17,7 @@ describe("parseIngestConfig", () => {
       githubDeliveryPrefix: "deliveries/github",
       region: "us-east-1",
       logLevel: "info",
-      env: "prod"
+      env: "production"
     })
   })
 
@@ -53,13 +53,13 @@ describe("parseIngestConfig", () => {
     ).toBe("us-east-1")
   })
 
-  it.for([["local"], ["dev"], ["qa"], ["staging"], ["prod"]])("accepts the project environment %s", ([env]) => {
+  it.for([["development"], ["production"]])("accepts the project environment %s", ([env]) => {
     expect(Either.getOrThrow(parseIngestConfig({ ...complete, ENV: env as string })).env).toBe(env)
   })
 
-  it("refuses an environment outside the project's one vocabulary, rather than coercing it", () => {
-    expect(Either.isLeft(parseIngestConfig({ ...complete, ENV: "production" }))).toBe(true)
-    expect(Either.isLeft(parseIngestConfig({ ...complete, ENV: "stage" }))).toBe(true)
+  it("refuses an environment outside the project's two-value vocabulary, rather than coercing it", () => {
+    expect(Either.isLeft(parseIngestConfig({ ...complete, ENV: "prod" }))).toBe(true)
+    expect(Either.isLeft(parseIngestConfig({ ...complete, ENV: "staging" }))).toBe(true)
   })
 
   it("refuses a log level winston does not know, which would silence the function", () => {
@@ -67,7 +67,7 @@ describe("parseIngestConfig", () => {
   })
 
   it("reports every configuration problem at once", () => {
-    const failure = Either.getOrThrow(Either.flip(parseIngestConfig({ ENV: "production", LOG_LEVEL: "loud" })))
+    const failure = Either.getOrThrow(Either.flip(parseIngestConfig({ ENV: "prod", LOG_LEVEL: "loud" })))
     expect(failure).toContain("eventBucketName")
     expect(failure).toContain("stateBucketName")
     expect(failure).toContain("env")

@@ -16,7 +16,7 @@ import { Either, ParseResult, Schema } from "effect"
  * is present; whether its token can actually be read is decided per invocation in `composition.ts`.
  */
 
-export const deploymentEnvs = { local: "local", dev: "dev", qa: "qa", staging: "staging", prod: "prod" } as const
+export const deploymentEnvs = { development: "development", production: "production" } as const
 
 export type DeploymentEnv = (typeof deploymentEnvs)[keyof typeof deploymentEnvs]
 
@@ -27,7 +27,7 @@ export type LogLevel = (typeof logLevels)[keyof typeof logLevels]
 export const pollerConfigDefaults = {
   region: "us-east-1",
   logLevel: logLevels.info,
-  env: deploymentEnvs.prod,
+  env: deploymentEnvs.production,
   stateKey: "state/github-poller.json",
   githubApiBaseUrl: "https://api.github.com",
   seenCap: 1_000,
@@ -51,7 +51,7 @@ const PollerConfigSchema = /*#__PURE__*/ Schema.Struct({
   seenCap: PositiveInt,
   fetchTimeoutMs: PositiveInt,
   logLevel: Schema.Literal(logLevels.error, logLevels.warn, logLevels.info, logLevels.debug),
-  env: Schema.Literal(deploymentEnvs.local, deploymentEnvs.dev, deploymentEnvs.qa, deploymentEnvs.staging, deploymentEnvs.prod)
+  env: Schema.Literal(deploymentEnvs.development, deploymentEnvs.production)
 }).annotations({ identifier: "PollerConfig" })
 
 export type PollerConfig = typeof PollerConfigSchema.Type

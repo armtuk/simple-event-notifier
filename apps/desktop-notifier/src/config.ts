@@ -13,20 +13,16 @@ export const notifierKinds = { auto: "auto", toasted: "toasted", shell: "shell" 
 export type NotifierKind = (typeof notifierKinds)[keyof typeof notifierKinds]
 
 /**
- * The environments a log record may be stamped with.
- *
- * This is **the project's one environment vocabulary**, `.agents/guidance/aws.md`'s list, and the
- * Terraform `env` variable validates against exactly the same five values — the spelling has to
- * agree, because it names buckets and DNS labels on one side and stamps log records on the other.
- * It differs from `.agents/guidance/logging.md`'s `["dev","qa","stage","prod"]` in two ways: `local`
- * is included (this daemon's ordinary home is a laptop, and refusing the project's own default
- * environment would make it unusable), and the third environment is spelled `staging` rather than
- * `stage`. Both are recorded once in `CLAUDE.md` § Documented carve-outs.
+ * The environments a log record may be stamped with — **the project's one environment vocabulary**,
+ * `.agents/guidance/aws.md`'s `development` / `production`. The Terraform `env` variable validates
+ * against exactly these two, because the same value names buckets and DNS labels on one side and
+ * stamps log records on the other, so the spelling has to agree. The project uses `development`
+ * sparingly; `production` is the ordinary home of this daemon.
  *
  * These are explicit literals, not fallbacks: an unrecognized `ENV` still fails configuration, which
- * is the harm `logging.md`'s closed set exists to prevent.
+ * is the harm `.agents/guidance/logging.md`'s closed set exists to prevent.
  */
-export const deploymentEnvs = { local: "local", dev: "dev", qa: "qa", staging: "staging", prod: "prod" } as const
+export const deploymentEnvs = { development: "development", production: "production" } as const
 
 export type DeploymentEnv = (typeof deploymentEnvs)[keyof typeof deploymentEnvs]
 
@@ -37,10 +33,12 @@ export type LogLevel = (typeof logLevels)[keyof typeof logLevels]
 
 export const configDefaults = {
   region: "us-east-1",
-  pollIntervalMs: 30_000,
+  // Perceived latency of the whole system, and a cheap S3 LIST the operator fully controls with
+  // fewer than ~10 readers — so it is polled every 10s, not throttled like a rate-limited 3P API.
+  pollIntervalMs: 10_000,
   maxBackoffMs: 300_000,
   logLevel: logLevels.info,
-  env: deploymentEnvs.dev,
+  env: deploymentEnvs.production,
   notifier: notifierKinds.auto
 } as const
 
@@ -48,7 +46,7 @@ const PositiveInt = Schema.NumberFromString.pipe(Schema.int(), Schema.positive()
 
 /**
  * `env` and `logLevel` are closed sets, so they are `Schema.Literal` rather than bare non-empty
- * strings. Accepting anything and silently coercing is worse than refusing to start: `ENV=production`
+ * strings. Accepting anything and silently coercing is worse than refusing to start: `ENV=prod`
  * would stamp every shipped log record with the wrong environment, and `LOG_LEVEL=verbse` would hand
  * winston a level it does not know, leaving the daemon running and emitting nothing.
  */
@@ -60,7 +58,7 @@ const ConfigSchema = /*#__PURE__*/ Schema.Struct({
   stateFile: Schema.NonEmptyString,
   logLevel: Schema.Literal(logLevels.error, logLevels.warn, logLevels.info, logLevels.debug),
   logFile: Schema.optionalWith(Schema.NonEmptyString, { exact: true }),
-  env: Schema.Literal(deploymentEnvs.local, deploymentEnvs.dev, deploymentEnvs.qa, deploymentEnvs.staging, deploymentEnvs.prod),
+  env: Schema.Literal(deploymentEnvs.development, deploymentEnvs.production),
   notifier: Schema.Literal(notifierKinds.auto, notifierKinds.toasted, notifierKinds.shell)
 }).annotations({ identifier: "DaemonConfig" })
 

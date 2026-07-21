@@ -9,7 +9,7 @@ const baseEnv = {
   STATE_BUCKET_NAME: "state.prod.personal-events.fifthdimensionengineering.com",
   GITHUB_USERNAME: "alexrmturner",
   AWS_REGION: "us-east-1",
-  ENV: "local",
+  ENV: "development",
   LOG_LEVEL: "debug"
 }
 

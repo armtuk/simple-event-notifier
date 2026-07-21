@@ -54,7 +54,7 @@ export const createIngestApp = (env: Environment, integrations: IntegrationFacto
 }
 
 const misconfiguredApp = (reason: string): IngestApp => {
-  const logger = createIngestLogger({ level: "error", env: "prod" })
+  const logger = createIngestLogger({ level: "error", env: "production" })
   logger.error("webhook ingest cannot start", { reason })
   return { handler: async () => serverError(), logger }
 }
