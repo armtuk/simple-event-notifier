@@ -21,6 +21,8 @@ const normalized = (overrides: Partial<NormalizedEvent> = {}): NormalizedEvent =
   source: "example",
   name: "issues-opened",
   timestamp: "2026-07-19T18:44:30.123Z",
+  producer: "example-producer",
+  eventId: "item-7",
   trigger: { channel: "webhook", event: "issues", action: "opened" },
   payload: { number: 7 },
   ...overrides
@@ -46,6 +48,16 @@ describe("transform", () => {
       toEvent(normalized({ name: "deployment-status", trigger: { channel: "webhook", event: "deployment_status" } }))
     )
     expect(event).toMatchObject({ eventType: "notification", priority: 3, name: "deployment-status" })
+  })
+
+  it("carries the normalizer's producer and eventId through to the event", () => {
+    expect(Either.getOrThrow(toEvent(normalized()))).toMatchObject({ producer: "example-producer", eventId: "item-7" })
+  })
+
+  it("gives two normalized events that agree on everything but eventId distinct object keys", () => {
+    const a = Either.getOrThrow(toEvent(normalized({ eventId: "aaa" })))
+    const b = Either.getOrThrow(toEvent(normalized({ eventId: "bbb" })))
+    expect(buildEventKey(a)).not.toBe(buildEventKey(b))
   })
 
   it("carries the raw payload through untouched", () => {
@@ -75,7 +87,7 @@ describe("transform", () => {
   it("produces an event whose object key round-trips through the codec", () => {
     const event = Either.getOrThrow(toEvent(normalized()))
     const key = buildEventKey(event)
-    expect(key).toBe("2026-07-19T18:44:30.123Z.alert.p5.example.new-issue.json")
+    expect(key).toBe("2026-07-19T18:44:30.123Z.alert.p5.example.new-issue.example-producer.item-7.json")
     expect(Either.isRight(parseKey(key))).toBe(true)
   })
 

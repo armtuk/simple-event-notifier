@@ -48,6 +48,8 @@ const toCandidate = (
   priority,
   source: normalized.source,
   name: name ?? normalized.name,
+  producer: normalized.producer,
+  eventId: normalized.eventId,
   acknowledged: false,
   handled: false,
   ...(normalized.workItem === undefined ? {} : { workItem: normalized.workItem }),

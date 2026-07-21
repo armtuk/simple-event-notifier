@@ -30,6 +30,12 @@ describe("normalizeWebhook", () => {
     })
   })
 
+  it("sets producer to github-webhook and eventId to the delivery id, so a redelivery is idempotent", () => {
+    const normalized = Either.getOrThrow(normalizeWebhook(webhook("pull_request", "webhook-pull_request-opened.json")))
+    expect(normalized.producer).toBe("github-webhook")
+    expect(normalized.eventId).toBe("5b1c8e40-84a1-11f1-9a3c-2b6f0e1d7c88")
+  })
+
   it("carries the whole raw delivery through as payload, losing nothing the subset schema ignored", () => {
     const raw = readGithubExemplar("webhook-pull_request-opened.json")
     expect(Either.getOrThrow(normalizeWebhook(webhook("pull_request", "webhook-pull_request-opened.json"))).payload).toStrictEqual(raw)
@@ -63,6 +69,12 @@ describe("normalizeWebhook", () => {
 })
 
 describe("normalizeNotification", () => {
+  it("sets producer to github-poller and eventId to the notification id", () => {
+    const normalized = Either.getOrThrow(normalizeNotification(readGithubExemplar("notification-review_requested.json")))
+    expect(normalized.producer).toBe("github-poller")
+    expect(normalized.eventId).toBe("18442310771")
+  })
+
   it("takes its instant from updated_at, widened to the contract's three fractional digits", () => {
     const normalized = Either.getOrThrow(normalizeNotification(readGithubExemplar("notification-review_requested.json")))
     expect(normalized).toMatchObject({
@@ -104,7 +116,27 @@ describe("normalizeNotification", () => {
   it("gives two same-second notifications the identical timestamp, so their keys sort adjacently", () => {
     const first = Either.getOrThrow(normalizeNotification(readGithubExemplar("notification-review_requested.json")))
     const second = Either.getOrThrow(normalizeNotification(readGithubExemplar("notification-mention.json")))
+    expect(first.timestamp).toBe("2026-07-19T19:02:11.000Z")
+    expect(second.timestamp).toBe("2026-07-19T19:02:11.000Z")
     expect(first.timestamp).toBe(second.timestamp)
+  })
+
+  /**
+   * The *ordering* hazard, pinned end-to-end: two distinct inbox items with the same `reason` in the
+   * same second normalise to an identical `timestamp`, `trigger` and `name`, so their object keys
+   * differ **only** in `eventId` and sort adjacently. The `eventId` now keeps the two objects from
+   * colliding (R1-2 fixed), but the adjacency is still what makes a consumer's bare high-water mark
+   * able to skip a sibling — the separate lookback-window follow-up. Breaks loudly the day someone
+   * changes the precision handling.
+   */
+  it("gives two distinct same-reason, same-second items an identical timestamp, trigger and name — differing only in eventId", () => {
+    const base = readGithubExemplar("notification-mention.json") as Record<string, unknown>
+    const first = Either.getOrThrow(normalizeNotification(base))
+    const second = Either.getOrThrow(normalizeNotification({ ...base, id: "18442310999" }))
+    expect(first.timestamp).toBe(second.timestamp)
+    expect(first.trigger).toStrictEqual(second.trigger)
+    expect(first.name).toBe(second.name)
+    expect(first.eventId).not.toBe(second.eventId)
   })
 })
 
@@ -143,7 +175,9 @@ describe("githubToEvent / githubNotificationToEvent — the whole path an edge c
   it("produces an object key that round-trips through the codec", () => {
     const event = Either.getOrThrow(toEventFromWebhook(webhook("pull_request", "webhook-pull_request-opened.json")))
     const key = buildEventKey(event)
-    expect(key).toBe("2026-07-19T20:30:00.000Z.notification.p5.github.new-pull-request.json")
+    expect(key).toBe(
+      "2026-07-19T20:30:00.000Z.notification.p5.github.new-pull-request.github-webhook.5b1c8e40-84a1-11f1-9a3c-2b6f0e1d7c88.json"
+    )
     expect(Either.isRight(parseKey(key))).toBe(true)
   })
 

@@ -43,7 +43,18 @@ describe("toCanonicalInstant", () => {
    * behaviour as it *is*, not as it should be — the fix awaits a product decision on delivery
    * semantics. See the module docblock and the feature plan.
    */
-  it("gives two same-second notifications the identical instant — same-instant siblings are the norm here", () => {
-    expect(toCanonicalInstant("2026-07-19T19:02:11Z")).toStrictEqual(toCanonicalInstant("2026-07-19T19:02:11Z"))
+  it("erases the distinction between a bare second and an explicit .000, which is where the collapse begins", () => {
+    expect(toCanonicalInstant("2026-07-19T19:02:11Z")).toStrictEqual(toCanonicalInstant("2026-07-19T19:02:11.000Z"))
+  })
+
+  it("maps every sub-millisecond instant within one second onto the SAME canonical instant", () => {
+    const withinOneSecond = ["2026-07-19T19:02:11Z", "2026-07-19T19:02:11.000Z", "2026-07-19T19:02:11.0001Z", "2026-07-19T19:02:11.0009Z"]
+    expect(new Set(withinOneSecond.map(value => Either.getOrThrow(toCanonicalInstant(value)))).size).toBe(1)
+  })
+
+  it("still separates instants a millisecond apart, so the collapse is precision loss and not a constant", () => {
+    expect(Either.getOrThrow(toCanonicalInstant("2026-07-19T19:02:11.001Z"))).not.toBe(
+      Either.getOrThrow(toCanonicalInstant("2026-07-19T19:02:11.002Z"))
+    )
   })
 })

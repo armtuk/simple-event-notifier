@@ -31,8 +31,10 @@ export { validateGithubTriggers } from "./mapping-validation.ts"
 export {
   githubEventsApiToEvent,
   githubNotificationToEvent,
+  githubPollerProducer,
   githubSource,
   githubToEvent,
+  githubWebhookProducer,
   normalizeEventsApi,
   normalizeNotification,
   normalizeWebhook,

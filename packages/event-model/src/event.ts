@@ -83,6 +83,21 @@ export const EventSchema = /*#__PURE__*/ Schema.Struct({
   priority: Priority,
   source: NoDotString,
   name: NoDotString,
+  /**
+   * The **logical origin** of the event — a hostname for a local producer (`os.hostname()`), or an
+   * explicit constant for a deployed one (`github-webhook`, `github-poller`). Distinct from `source`
+   * (which system the event is *about*): two producers can report the same `source`, and `producer`
+   * is part of what keeps their object keys apart.
+   */
+  producer: NoDotString,
+  /**
+   * The provider's own delivery/event id where one exists (`X-GitHub-Delivery`, a notification or
+   * activity id), else a content hash of the body (`contentHashId`). It is the segment that makes
+   * the object key **identify an event**: two genuinely-distinct events can no longer collide onto
+   * one key, and re-delivering the *same* event rebuilds the *same* key — an idempotent overwrite
+   * with identical bytes rather than a duplicate.
+   */
+  eventId: NoDotString,
   acknowledged: Schema.Boolean,
   handled: Schema.Boolean,
   workItem: Schema.optionalWith(WorkItemUrl, { exact: true }),

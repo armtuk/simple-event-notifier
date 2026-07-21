@@ -21,6 +21,24 @@ import { readerFor, type WebhookFacts } from "./webhook-schema-registry.ts"
 export const githubSource = "github"
 
 /**
+ * The `producer` segment of the key: what *emitted* the event, as opposed to `source` (`github`),
+ * which system it is *about*. Both GitHub paths report `source: "github"`, but a webhook delivery and
+ * a polled item are different origins — so they carry different producers, which is part of what
+ * keeps their keys distinct even for the same underlying activity.
+ */
+export const githubWebhookProducer = "github-webhook"
+
+export const githubPollerProducer = "github-poller"
+
+/**
+ * `eventId` is the provider's own id — an `X-GitHub-Delivery`, a notification id, an activity id — so
+ * a genuine re-delivery rebuilds the same key (idempotent) and two distinct items never collide.
+ * `toDotSafe` is defensive: every id GitHub actually sends is already dot-free, but the key's no-dot
+ * rule is absolute, so an id is normalised before it becomes a key segment.
+ */
+const toEventId = (providerId: string): string => toDotSafe(providerId)
+
+/**
  * A webhook delivery carries no field that reliably says *when the thing happened* — payloads vary,
  * and several covered events have no timestamp at all. So the edge injects `receivedAt`, which is
  * both honest (it is genuinely the moment we learned of it) and keeps this function pure.
@@ -38,6 +56,8 @@ export const normalizeWebhook = (input: WebhookInput): Either.Either<NormalizedE
       source: githubSource,
       name: webhookName(input.eventName, facts.action),
       timestamp,
+      producer: githubWebhookProducer,
+      eventId: toEventId(input.deliveryId),
       trigger: buildWebhookTrigger(input.eventName, facts.action),
       ...(facts.workItem === undefined ? {} : { workItem: facts.workItem }),
       payload: asPayload(input.raw)
@@ -50,6 +70,8 @@ export const normalizeNotification = (raw: unknown): Either.Either<NormalizedEve
       source: githubSource,
       name: toDotSafe(notification.reason),
       timestamp,
+      producer: githubPollerProducer,
+      eventId: toEventId(notification.id),
       trigger: buildNotificationTrigger(notification.reason),
       ...(notification.subject.url === null ? {} : { workItem: notification.subject.url }),
       payload: asPayload(raw)
@@ -58,8 +80,14 @@ export const normalizeNotification = (raw: unknown): Either.Either<NormalizedEve
 
 /**
  * The Events API path. Its item carries a real per-item `created_at`, so unlike the webhook path
- * there is no injected clock, and unlike the notifications path the instants are genuinely distinct
- * per item — this source does **not** collapse a batch onto one millisecond.
+ * there is no injected clock.
+ *
+ * It does **not** escape the second-precision hazard, though: GitHub emits `created_at` at second
+ * precision here exactly as it does `updated_at` on the inbox — this package's own exemplars show it
+ * (`events-api-push.json` carries `"2026-07-19T19:14:52Z"`). So two activity items created in the
+ * same second normalise to the same millisecond, with the consequences in `instant.ts` and in
+ * `feature.md` § Follow-up candidates #1 and #3. The only channel that escapes is the webhook path,
+ * whose `receivedAt` is an injected `new Date().toISOString()`.
  */
 export const normalizeEventsApi = (raw: unknown): Either.Either<NormalizedEvent, GithubNormalizeError> =>
   Either.flatMap(readEventsApiItem(raw), item =>
@@ -70,6 +98,8 @@ export const normalizeEventsApi = (raw: unknown): Either.Either<NormalizedEvent,
         source: githubSource,
         name: toDotSafe(action === undefined ? item.type : `${item.type}-${action}`),
         timestamp,
+        producer: githubPollerProducer,
+        eventId: toEventId(item.id),
         trigger: buildEventsApiTrigger(item.type, action),
         ...(workItem === undefined ? {} : { workItem }),
         payload: asPayload(raw)

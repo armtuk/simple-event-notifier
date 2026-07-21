@@ -54,10 +54,29 @@ describe("normalizeEventsApi", () => {
     expect(normalized.timestamp).toBe("2026-07-19T19:14:52.000Z")
   })
 
-  it("gives two items with different created_at values different instants — unlike the notifications inbox", () => {
+  it("takes each item's own created_at rather than a batch-shared instant", () => {
     const first = Either.getOrThrow(normalizeEventsApi(readGithubExemplar("events-api-pull_request-opened.json")))
     const second = Either.getOrThrow(normalizeEventsApi(readGithubExemplar("events-api-push.json")))
-    expect(first.timestamp).not.toBe(second.timestamp)
+    expect(first.timestamp).toBe("2026-07-19T18:44:30.000Z")
+    expect(second.timestamp).toBe("2026-07-19T19:14:52.000Z")
+  })
+
+  /**
+   * Characterization of the hazard on **this** channel. The Events API was documented in three
+   * places as immune to the second-precision collapse; it is not — `created_at` is second-precision
+   * exactly like the inbox's `updated_at`. Two items created in the same second are indistinguishable
+   * by timestamp, which combined with the same `type`+`action` yields an identical object key.
+   *
+   * This asserts today's behaviour, not the desired behaviour. See `feature.md` § Follow-up
+   * candidates #1 and #3.
+   */
+  it("gives two items created in the same second the identical instant — this channel shares the hazard", () => {
+    const item = readGithubExemplar("events-api-push.json") as Record<string, unknown>
+    const sameSecond = { ...item, id: "56138221774", created_at: "2026-07-19T19:14:52Z" }
+    const first = Either.getOrThrow(normalizeEventsApi(item))
+    const second = Either.getOrThrow(normalizeEventsApi(sameSecond))
+    expect(first.timestamp).toBe(second.timestamp)
+    expect(first.trigger).toStrictEqual(second.trigger)
   })
 
   it("omits the action from an action-less push, in the name and the trigger alike", () => {

@@ -1,3 +1,4 @@
+export { contentHashId } from "./content-hash.ts"
 export { describeCause } from "./describe-cause.ts"
 export {
   type EventModelError,

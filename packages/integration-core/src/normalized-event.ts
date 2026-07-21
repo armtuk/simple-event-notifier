@@ -18,6 +18,13 @@ export const NormalizedEventSchema = /*#__PURE__*/ Schema.Struct({
   source: NoDotString,
   name: NoDotString,
   timestamp: IsoInstant,
+  /**
+   * The logical origin (`event.producer`) and the per-item id (`event.eventId`) the normalizer must
+   * supply, because only it knows a provider's delivery/event id. They are what make the object key
+   * identify an event — see `@personal-events/event-model` § "One object key denotes one event".
+   */
+  producer: NoDotString,
+  eventId: NoDotString,
   trigger: TriggerSchema,
   workItem: Schema.optionalWith(Schema.String, { exact: true }),
   payload: Schema.Record({ key: Schema.String, value: Schema.Unknown })

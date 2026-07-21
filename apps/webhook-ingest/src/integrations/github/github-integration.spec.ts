@@ -65,7 +65,7 @@ describe("GithubWebhookIntegration — the authenticated happy path", () => {
     const { integration, aws } = integrationWith()
     await integration.handle(await signedRequest({ body: pullRequestBody, eventName: "pull_request", deliveryId: "delivery-1" }))
     const [eventPut] = commandsNamed(aws.commands, "PutObjectCommand")
-    expect(String(eventPut?.input.Key)).toBe(`${receivedAt}.notification.p5.github.new-pull-request.json`)
+    expect(String(eventPut?.input.Key)).toBe(`${receivedAt}.notification.p5.github.new-pull-request.github-webhook.delivery-1.json`)
   })
 
   it("reads the secret once and reuses it across deliveries on a warm environment", async () => {
@@ -167,7 +167,7 @@ describe("GithubWebhookIntegration — unmapped and malformed deliveries", () =>
     })
     expect(await integration.handle(request)).toStrictEqual({ status: "events", count: 1 })
     const [eventPut] = commandsNamed(aws.commands, "PutObjectCommand")
-    expect(String(eventPut?.input.Key)).toContain(".notification.p3.github.deployment_status-created.json")
+    expect(String(eventPut?.input.Key)).toContain(".notification.p3.github.deployment_status-created.github-webhook.delivery-9.json")
     expect(entriesFor(log.captured, "github event is not in the mapping config; classified by the default")[0]).toMatchObject({
       matchKey: "webhook:action=created&event=deployment_status"
     })

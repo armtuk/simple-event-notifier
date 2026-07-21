@@ -186,16 +186,15 @@ describe("runSourceCycle — the events source uses the same machinery", () => {
 })
 
 /**
- * ## Characterization: two events, one object key — the R1-2 collision
+ * ## Characterization: two same-second, same-reason items no longer collide (R1-2 fixed)
  *
- * The S3 object key carries **no per-item identity** (in this commit — the event-model contract
- * change that adds `producer`/`eventId` and fixes it lands next), so two distinct notifications with
- * the same `reason` in the same second produce a byte-identical key and the second overwrites the
- * first. These specs assert on **stored keys**, not on `PutObjectCommand` count, because counting
- * puts cannot see the collapse. They flip to asserting two surviving objects once the contract
- * change lands.
+ * The object key now carries the item's `eventId`, so two distinct notifications sharing a `reason`
+ * and a second — the norm for the second-precision inbox — build **distinct** keys and both survive.
+ * Before the event-model contract change they collapsed onto one key and the second silently
+ * overwrote the first. These specs assert on **stored keys**, not on `PutObjectCommand` count,
+ * because counting puts could never see the old collapse.
  */
-describe("runSourceCycle — two same-second, same-reason items collapse onto one key (characterization)", () => {
+describe("runSourceCycle — two same-second, same-reason items no longer collide (R1-2 fixed)", () => {
   const sameSecondMention = (id: string, title: string): unknown => ({
     id,
     reason: "mention",
@@ -211,8 +210,14 @@ describe("runSourceCycle — two same-second, same-reason items collapse onto on
     expect(outcome).toMatchObject({ failed: false, written: 2 })
   })
 
-  it("leaves only ONE object in the bucket: the second overwrote the first", async () => {
+  it("leaves TWO distinct objects in the bucket — the eventId segment keeps them apart", async () => {
     const { s3 } = await run([itemsResult(twoMentions)])
-    expect(storedEventKeys(s3)).toStrictEqual(["2026-07-19T19:02:11.000Z.alert.p4.github.mention.json"])
+    expect(storedEventKeys(s3)).toHaveLength(2)
+  })
+
+  it("preserves both items' payloads; neither overwrites the other", async () => {
+    const { s3 } = await run([itemsResult(twoMentions)])
+    const ids = storedEventKeys(s3).map(key => JSON.parse(s3.stored.get(key) ?? "{}").payload.id)
+    expect(new Set(ids)).toStrictEqual(new Set(["111", "222"]))
   })
 })
