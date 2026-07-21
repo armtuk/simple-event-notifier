@@ -22,6 +22,14 @@ updated: 2026-07-19
 > Per `.agents/guidance/planning-artifacts.md` §3, `Abandoned` is **terminal and never reopened**.
 > If Slack permissions are granted later, re-plan it as a **new feature** (`/plan-feature`) rather
 > than resurrecting these files; the analysis below stays valid as reference input.
+>
+> **Platform note (2026-07-20 — Railway removed system-wide):** the whole project is now **AWS-only**;
+> Railway was dropped as a dependency. The body below describes a **persistent Railway Socket Mode
+> service**, which no longer reflects the platform. Because Slack Socket Mode needs a *long-lived
+> websocket*, it cannot become a scheduled Lambda; a revived Slack integration would run on **AWS
+> Fargate/ECS** (or use Slack's HTTP Events API behind an API-Gateway Lambda instead of Socket Mode).
+> The Railway/Socket-Mode mechanics below are left intact as **historical reference only** — this
+> feature is abandoned, so they were not rewritten.
 
 > **Dependency note:** the recorded `depends-on: [github-integration]` is coarser than the
 > real edge. The **only hard prerequisite** is `integration-core` (**AWE-153**, which lives in

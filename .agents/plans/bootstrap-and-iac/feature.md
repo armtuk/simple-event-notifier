@@ -48,7 +48,8 @@ parses objects through the event-model package, and raises desktop notifications
   populated manually to prove the consumer path.
 - The SNS/SQS **fan-out queue with TTL** and multi-client subscription model (later feature);
   the desktop client polls the bucket directly for now.
-- The Event UI and the Railway-hosted persistent client services (later features).
+- The Event UI and the AWS-hosted ingest services — scheduled-poll Lambdas, and the S3 + CloudFront
+  Event UI (later features; the platform is AWS-only, no Railway).
 - Source-specific classifiers (GitHub/Slack/agents).
 - CI/CD pipelines beyond the local `turbo` scripts (can follow once the shape is stable).
 
