@@ -208,3 +208,51 @@ graph (`integration-core`, `github`, `event-sink`, `webhook-ingest`, `github-pol
 uncached with 602 specs (Level 0's 182 among them, unchanged); `terraform fmt -check` clean,
 `validate` Success on both roots, and a real scratch `plan` of `34 to add, 0 to change, 0 to destroy`.
 Nothing applied, nothing deployed, nothing pushed.
+
+---
+
+## 2026-07-21 — START — `github-integration` R1 fix round + AWS-only re-arch + contract change
+
+**Prompt (summarised):** apply the R1 review (2 blockers, 7 majors, 5 minors, 1 nit), reconciled with
+three user decisions delivered mid-round: (1) drop Railway — the poller becomes an
+EventBridge-scheduled Lambda; (2) an approved **event-model contract change** adding `producer` +
+`eventId` to the key, which *properly fixes* the R1-2 collision; (3) the environment vocabulary
+becomes `development` / `production` only; (4) the desktop notifier polls every 10s. Record — do not
+build — the delivery-semantics lookback window (now a *decided* consumer-side follow-up). Same fence.
+
+**Understood as:** four logical commits — poller re-arch, env rename, contract change, folded R1
+fixes + records — each verified, with the WIP from the interrupted first R1 pass reconciled (keep the
+still-valid fixes, redo the Railway-specific parts).
+
+## 2026-07-21 — END — same
+
+**Actions completed (five commits on `github-integration`):**
+
+- **Poller re-arch (Railway → scheduled Lambda).** Deleted the Dockerfile, `railway.json`, the
+  self-scheduling daemon loop and its backoff. The handler is one poll cycle; EventBridge is the
+  cadence; state is one S3 object read-once/written-once; PATs in SSM; `reserved_concurrent_executions
+  = 1`. Terraform `github-poller.tf` (Lambda + EventBridge + 2 SSM params + IAM role) replaces the IAM
+  user. **Moots R1-1/4/7/14.** Also folded R1-5 (branded `EventBucketName`/`StateBucketName`).
+- **Env vocabulary → development / production** across all apps, both Terraform roots, specs and docs;
+  the CLAUDE.md carve-out deleted. Desktop notifier poll interval 30s → 10s.
+- **Event-model contract: `producer` + `eventId`.** Key is now
+  `…{name}.{producer}.{eventId}.json`. Properly fixes R1-2 (overwrite collision) and makes redelivery
+  idempotent. Rippled through integration-core, github (both normalizers), event-sink, webhook-ingest,
+  the poller, and Level 0's event-model/desktop-notifier — all green.
+- **Remaining R1 fixes:** R1-8 (API GW `source_arn` wildcard), R1-9 (`SourceAdapter` → `Normalizer`),
+  R1-10 (matchKey escaping), R1-11 (secret 401→500 docs), R1-13 (bounded put concurrency), plus the
+  webhook R1-1 createRequire/bundle spec. ADR, feature.md, the two story plans, and the review file's
+  R1 disposition table updated.
+
+**Open questions / blockers:** none. The delivery-semantics question is now **decided** —
+retry-with-lookback (`StartAfter = max(mark − lookbackWindow, seed)` + a delivered-key set), a
+consumer-side change deferred to its own story, closing this feature's ordering skip and
+`bootstrap-and-iac` #12 / R2-1 together.
+
+**@test-removed** — none.
+
+**Left off at:** five commits; `pnpm build/lint/test/typecheck --force` green uncached (615 specs;
+Level 0's specs among them, unchanged); `terraform fmt -check` + `validate` clean on both roots;
+scratch `plan` `41 to add, 0 to change, 0 to destroy`. Nothing applied, deployed, or pushed. Every
+deploy-gated criterion — now Lambda/EventBridge/SSM-shaped — is enumerated per story under
+`## Deferred verification`.

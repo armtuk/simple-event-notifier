@@ -45,7 +45,7 @@ objects (exemplar-driven), the GitHub **mapping config JSON**, and a normalizer 
 the canonical fields from both namespaces. A **generic webhook ingest** — Terraform API Gateway
 (HTTP API) + Lambda extending the AWE-151 infra — receives webhooks and dispatches to the
 registered integration; the **GitHub webhook handler** verifies `X-Hub-Signature-256` and writes
-canonical events to S3. A **persistent Railway poller** calls `GET /notifications` with a **classic
+canonical events to S3. A **scheduled-Lambda poller** (EventBridge `rate(1 minute)`) calls `GET /notifications` with a **classic
 PAT** (the Notifications API does **not** support fine-grained PATs or App tokens) using
 conditional requests (Last-Modified / `X-Poll-Interval`), maps via the same config, and writes
 to S3 — the fallback that needs no admin. Both paths converge on the shared event-model and S3
@@ -68,7 +68,7 @@ sink. Webhook signature verification reuses `@octokit/webhooks` (pure ESM, typed
   (timing-safe), classified via the GitHub mapping config, and written to S3 as a canonical
   event; an invalid signature is rejected (401) and logged; an unmapped event-name falls back
   to a documented default classification rather than being dropped.
-- **Polling path:** the Railway poller ingests Notifications-inbox items using a **classic PAT
+- **Polling path:** the scheduled-Lambda poller ingests Notifications-inbox items using a **classic PAT
   only** (no admin), dedupes so no duplicate S3 events occur across polls or restarts, respects
   rate limits via conditional requests (304s don't count), maps via the same config, writes S3.
 - **Config-driven:** changing whether an event is an alert/notification or its priority is a
@@ -86,7 +86,7 @@ sink. Webhook signature verification reuses `@octokit/webhooks` (pure ESM, typed
 ### Approach overview
 Build the **template first** (pure, reusable, no I/O), then the **GitHub instance** (payload
 schemas + mapping config + normalizer), then the **generic ingest infra** (API GW + Lambda),
-then the **GitHub webhook handler** on top of it, and finally the **Railway poller** fallback.
+then the **GitHub webhook handler** on top of it, and finally the **scheduled-Lambda poller** fallback.
 The webhook and polling paths share the `integration-core` transform and the GitHub mapping
 config and converge on `event-model` → S3, so classification logic exists exactly once. Two
 GitHub event namespaces must be reconciled in the mapping config: webhook `X-GitHub-Event`
@@ -103,11 +103,11 @@ names (e.g. `pull_request`, `issues`) and Notification `reason` values (e.g. `re
 | AWE-154 | `github-event-mapping.md` | GitHub payload schemas, mapping config & normalizer | **Implementation Adjustment** |
 | AWE-155 | `webhook-ingest-infra.md` | Generic webhook ingest (API Gateway + Lambda) | **Implementation Adjustment** |
 | AWE-156 | `github-webhook-handler.md` | GitHub webhook handler (signature verify → S3) | **Implementation Adjustment** |
-| AWE-157 | `github-notifications-poller.md` | GitHub activity poller (Railway fallback) | **Implementation Adjustment** |
+| AWE-157 | `github-notifications-poller.md` | GitHub activity poller (scheduled-Lambda fallback) | **Implementation Adjustment** |
 
 The four non-terminal stories are non-terminal **by design**, not because work is outstanding: each
 has acceptance criteria that can only be closed by `terraform apply`, a real webhook registration, a
-real PAT, or a Railway deployment — all outside the execution fence. Every such criterion is
+real PAT, or a Lambda/EventBridge deployment — all outside the execution fence. Every such criterion is
 enumerated in that story's `## Deferred verification` table with the exact command that closes it.
 The feature reaches `Completed` when those are run, not when more code is written.
 
@@ -127,7 +127,7 @@ Ordered by dependency. Each is a coherent ~1hr-review increment (not a micro-PR)
 4. **github-webhook-handler** — the GitHub webhook path wired into the ingest: HMAC
    `X-Hub-Signature-256` verification, `X-GitHub-Event` parsing, `X-GitHub-Delivery` dedupe,
    secret management, map → S3. *(AWE-156)*
-5. **github-notifications-poller** — the Railway persistent service that **dual-polls** the
+5. **github-notifications-poller** — the EventBridge-scheduled Lambda that **dual-polls** the
    Notifications API (classic PAT) **and** the Events API (any token, richer payloads), with
    per-source conditional requests, cursors/dedupe, and rate-limit handling, map → S3 — the
    no-admin fallback. *(AWE-157)*
@@ -153,7 +153,7 @@ Ordered by dependency. Each is a coherent ~1hr-review increment (not a micro-PR)
   `updated_at`) both write the same bucket; dedupe keys + the event-key scheme must prevent
   duplicates, especially if both paths are enabled for the same repo.
 - **Secret management:** the webhook HMAC secret (AWS SSM/Secrets Manager) and the poller PAT
-  (Railway env/secret) need secure storage; the Railway poller also needs AWS creds to write S3.
+  (SSM SecureStrings) need secure storage; the poller Lambda uses its IAM role to write S3.
 - **Public endpoint security:** the webhook URL is internet-facing — signature verification is
   the gate; also consider payload-size limits and replay.
 - **Rate limits:** unconditional polling burns the 5000/hr core budget; conditional requests
@@ -164,7 +164,7 @@ Ordered by dependency. Each is a coherent ~1hr-review increment (not a micro-PR)
 
 ## Follow-up candidates — recorded for the user, deliberately not implemented
 
-### 1. The ordering hazard is the *norm* for the notifications poller, not a coincidence
+### 1. The ordering hazard is the *norm* for both poller channels, not a coincidence
 
 Level 0's review found, and deliberately did not fix, that a consumer's S3 high-water mark is over
 **producer-supplied** timestamps: an object whose key sorts below the current mark is never re-listed
@@ -172,23 +172,39 @@ and is permanently undelivered (`packages/event-model/README.md` § "Key order i
 `apps/desktop-notifier/src/poller.ts`; `.agents/plans/bootstrap-and-iac/feature.md` § Follow-up
 candidates).
 
-**This feature makes that hazard routine rather than rare.** AWE-154's resolved decision sets a
-notification event's `timestamp` from the Notifications API's `updated_at`, which GitHub emits at
-**second** precision. Normalised into the contract's mandatory three-digit fraction it becomes
-`.000`, so **every notification in a batch that shares a second shares a millisecond** — and a batch
-is exactly what one poll returns. A consumer poll landing mid-batch advances its mark past siblings
+**This feature makes that hazard routine rather than rare, on both poller channels.** AWE-154's
+resolved decision sets a notification event's `timestamp` from the Notifications API's `updated_at`,
+and AWE-157's sets an activity event's from the Events API's `created_at`. **GitHub emits both at
+second precision** — the package's own exemplars show it (`notification-mention.json`
+`2026-07-19T19:02:11Z`, `events-api-push.json` `2026-07-19T19:14:52Z`). Normalised into the contract's mandatory three-digit fraction each becomes
+`.000`, so **every item in a batch that shares a second shares a millisecond** — and a batch is
+exactly what one poll returns. Only the webhook path is exempt, because its `receivedAt` is an
+injected `new Date().toISOString()`.
+
+> **Corrected by R1-3.** Until the R1 review round this feature claimed in three places that the
+> Events API channel was immune. It is not; its exemplars disprove it. The claim is fixed in
+> `packages/github/src/normalizer.ts`, in AWE-157's design decisions, and in the spec name that
+> encoded it, and the channel is now inside this follow-up's scope. A consumer poll landing mid-batch advances its mark past siblings
 it has not seen, and loses them permanently.
 
 What was done here: the behaviour is documented at its source (`packages/github/src/instant.ts`),
 pinned by characterization specs in `instant.spec.ts` and `normalizer.spec.ts`, and recorded in the
 feature ADR. **No sub-second detail is invented** — `.000` is honest about the precision that
-arrived — and the poller (AWE-157) writes each event under its own real per-item instant rather than
-batching many events under one shared timestamp, so the situation is not made worse.
+arrived.
 
-What was **not** done: the fix (a lookback poll window plus a delivered-key set on the consumer
-side). It needs a product decision that has not been made — **at-most-once vs
-retry-until-delivered vs quarantine-and-continue, and how wide a lookback** — which is the same
-decision blocking follow-ups #12 and R2-1 from `bootstrap-and-iac`. One ruling closes all three.
+**The *overwrite* half of this hazard is now fixed** (see #3): the key carries `eventId`, so
+same-second siblings no longer collide. What remains is the *ordering skip* — a consumer's bare
+high-water mark can still advance past a sibling it has not yet delivered, because the two keys sort
+adjacently.
+
+> **Decided remedy (2026-07-21), deferred to its own story.** The earlier open question —
+> at-most-once vs retry-until-delivered vs quarantine, and how wide a lookback — is **resolved** in
+> favour of **retry-with-lookback**: a consumer sets `StartAfter = max(mark − lookbackWindow, seed)`
+> and keeps a bounded **delivered-key set** in its state to suppress the re-reads the overlap
+> produces. This is a **consumer-side** change (`apps/desktop-notifier` and any future reader), not a
+> producer change, so it is not built in this feature. It is the same fix that closes
+> `bootstrap-and-iac` #12 and R2-1. A new story under this feature (or a `desktop-notifier` story)
+> owns it.
 
 ### 2. No specificity ladder in the mapping match (surfaced by AWE-154)
 
@@ -209,3 +225,45 @@ every integration's contract, so it is recorded here rather than taken mid-featu
 mitigations are in place: GitHub rejects an unproducible trigger shape at config load
 (`mapping-validation.ts`) instead of accepting a rule that could never fire, and the constraint is
 documented in both package READMEs.
+
+### 3. Two distinct events sharing one object key — FIXED (2026-07-21) by the contract change
+
+**Found by the R1 review, reproduced, and — on the user's explicit approval — fixed properly in the
+event-model contract rather than merely recorded.**
+
+The old key `{timestamp}.{type}.p{priority}.{source}.{name}.json` carried **no per-item identity**.
+Given #1 (both poller channels second-precision) and classification keyed on the notification
+`reason` alone, two distinct same-second same-reason notifications built a byte-identical key and the
+second `PutObject` silently overwrote the first — `count: 2`, both succeed, cursor advances, one event
+gone with no error. Reproduced directly against the built packages before the fix
+(`…alert.p4.github.mention.json` for two different mentions).
+
+**The fix:** `@personal-events/event-model` now carries `producer` and `eventId` in the body and the
+key (`…{name}.{producer}.{eventId}.json`). `eventId` is the provider's own delivery/event id (a
+notification id here), so two distinct items get distinct keys and a re-delivery rebuilds the *same*
+key — idempotent. The poller's characterization specs flipped from "one object survives" to "two
+distinct objects survive"; `event-model`'s README now truthfully says "one object key denotes one
+event". Level 0's `event-model`/`desktop-notifier` were updated in step and stay green. See the ADR
+§ "The overwrite collision — solved".
+
+This closed the *overwrite* defect. The distinct-but-adjacent *ordering* skip is #1's remaining
+half, with its own decided lookback remedy.
+
+### 4. Three near-duplicate S3-client, config and logging modules across the app edges
+
+`packages/event-sink/src/s3-client.ts` carries a bucket probe near-identical to
+`apps/desktop-notifier/src/s3-client.ts` (Level 0). Collapsing them was deliberately **not** done
+mid-feature because it would move a Level 0 app's specs while this feature was in flight — but the
+pointer in `event-sink`'s docblock claimed a follow-up existed here when none did (R1-12), so this is
+that entry.
+
+The same accretion shows up in the edges more broadly: `deploymentEnvs` / `logLevels` /
+`omitUndefined` are now declared in **three** app config modules, the winston factory in three, and
+`capturingLogger` in three testing modules. The environment vocabulary is the sharpest of these — it
+is a `CLAUDE.md` carve-out that exists precisely to stop the five values drifting, and it is now
+written out three times.
+
+One "collapse the app edges onto shared modules" change covers all of it: a small shared
+runtime/config package holding the environment vocabulary, the log levels, the winston factory and
+the bucket probe, with `desktop-notifier`, `webhook-ingest` and `github-poller` all consuming it.
+Deferred rather than done here because it touches a Level 0 app.

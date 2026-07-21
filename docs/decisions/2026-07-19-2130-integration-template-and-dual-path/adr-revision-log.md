@@ -40,3 +40,25 @@ Following the AWE-157 implementation. The decision is unchanged; three details a
 - **The Railway poller's IAM access key is created out of band**, like the webhook secret.
   Terraform owns the user and its (write-only, single-key-scoped) policy, and nothing else, so no
   credential enters Terraform state.
+
+## 2026-07-21T00:00:00Z — Poller re-architected to AWS; overwrite collision fixed in the contract; R1 findings applied — Alex Turner
+
+Two substantive changes and one platform change, following the R1 review and a user direction:
+
+- **AWS-only.** The poller moves from a long-running Railway container to an EventBridge-scheduled
+  Lambda (`rate(1 minute)`), with state in the operational-state bucket and PATs in SSM. The platform
+  is now AWS-only (`system.md`). This mooted the R1 concurrent-cursor-clobber finding (a scheduled
+  Lambda with `reserved_concurrent_executions = 1` has no concurrent loops).
+- **The overwrite collision is solved, not just recorded.** The event-model contract gained
+  `producer` and `eventId`, extending the object key to
+  `…{name}.{producer}.{eventId}.json` so two distinct same-second same-classification events no longer
+  collide and a re-delivery is idempotent. Made on the user's explicit approval. The "Known
+  limitations" section is rewritten accordingly; the ordering skip remains, now with a *decided*
+  consumer-side lookback remedy deferred to its own story.
+- **R1 findings applied**: `SourceAdapter` (0/2 adoption) replaced by a `Normalizer` function type;
+  `matchKey` fields escaped; the API Gateway `source_arn` corrected to a wildcard; `putObjects`
+  bounded to the default parallelism of 10; the secret-repository and Events-API-immunity docblocks
+  corrected; the two-bucket rule now enforced by branded types.
+
+The core decision — a config-driven template with dual webhook + poller ingestion on one shared S3
+write path — is unchanged.

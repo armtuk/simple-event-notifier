@@ -295,9 +295,12 @@ would have introduced, and it is fixed rather than recorded.
 ### Other design decisions taken during implementation
 
 - **A failed secret read is not cached.** The plan's `this.cached ??= this.fetch()` memoizes the
-  rejected promise, so one transient SSM blip would make the function reject **every** delivery until
-  AWS recycled the environment — and a rejected delivery is a 401 GitHub never retries, i.e. silent
-  permanent loss. The memo is cleared on failure; a spec pins it.
+  rejected promise, so one transient SSM blip would make the function answer **500** to every delivery
+  until AWS recycled the environment (a `secrets.get()` rejection propagates out of `handle` to the
+  router's catch). A 500 is visible in GitHub's delivery log and hand-redeliverable, so it is not
+  silent loss — but making a whole warm environment fail over one blip is still wrong, so the memo is
+  cleared on failure and the next delivery retries the read; a spec pins it. *(R1-11 corrected the
+  earlier "401" claim in the docblock and here.)*
 - **An empty secret is rejected.** A SecureString sitting at Terraform's placeholder, or blanked,
   would otherwise be used to verify every signature.
 - **A missing `X-GitHub-Delivery` is a 400, not a best-effort write.** The plan left this open

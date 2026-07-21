@@ -44,7 +44,9 @@ export interface RunOptions {
 export const runScheduledPoll = async (env: Environment, options: RunOptions = {}): Promise<PollSummary> => {
   const config = parsePollerConfig(env)
   if (Either.isLeft(config)) {
-    ;(options.logger ?? createPollerLogger({ level: "error", env: "production" })).error("github poller cannot start", { reason: config.left })
+    ;(options.logger ?? createPollerLogger({ level: "error", env: "production" })).error("github poller cannot start", {
+      reason: config.left
+    })
     return { written: 0, polled: [], skipped: [] }
   }
   const logger = options.logger ?? createPollerLogger({ level: config.right.logLevel, env: config.right.env })

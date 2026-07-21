@@ -347,6 +347,7 @@ acceptance criteria are therefore **unverified** — not failed, untested.
 | The ACM certificate validates through the delegated child zone | **Unverified** | `dig +short NS personal-events.fifthdimensionengineering.com` must return the child zone's nameservers **before** apply, or validation hangs at `PENDING_VALIDATION` |
 | The IAM role can actually `PutObject` into the event bucket | **Unverified** | closed by AWE-156's end-to-end signed `curl`; until an integration is registered nothing writes |
 | A missing IAM permission surfaces clearly in the logs | **Unverified** | temporarily remove the `WriteEvents` statement, apply, post a signed delivery, and confirm the `PutEventsFailure` message names the bucket and key |
+| The Lambda resource policy admits a real invocation (R1-8) | **Unverified** | `curl -XPOST "$(terraform -chdir=infra/personal-events output -raw ingest_url)/github"` returns **404 from our handler** (look for `unroutable webhook path` in CloudWatch), not a bare **403** from API Gateway — the latter would mean the `source_arn` wildcard is wrong |
 | Lambda stays within its duration budget under a real delivery | **Unverified** | `aws logs tail` and read the `REPORT` line's `Duration` |
 
 **No AWS resource was created. No `terraform apply` was run. Nothing was deployed.**

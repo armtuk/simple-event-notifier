@@ -362,29 +362,54 @@ would have caught it, because every spec injects its own scheduler.
 - **The notification `since` cursor advances only to the newest `updated_at` actually seen**, and
   the dedupe set — not the cursor — is what prevents re-delivery. Advancing past what was seen would
   skip an item updated in the same second.
-- **The Events API path does not share the notifications timestamp hazard**: an activity item carries
-  a real per-item `created_at`, so this source does not collapse a batch onto one millisecond.
+- ~~**The Events API path does not share the notifications timestamp hazard**~~ — **this claim was
+  wrong and is corrected (R1-3).** An activity item does carry its own `created_at` rather than an
+  injected clock, but GitHub emits it at **second** precision, exactly like the inbox's `updated_at`
+  — this package's own exemplars show it (`events-api-push.json`: `"2026-07-19T19:14:52Z"`). Two
+  items created in the same second therefore normalise to the same millisecond, and the `events_api`
+  channel is inside the scope of `feature.md` § Follow-up candidates #1 and #3. Only the webhook path
+  escapes, because its `receivedAt` is an injected `new Date().toISOString()`.
+
+## Re-architecture (2026-07-21): Railway container → EventBridge-scheduled Lambda
+
+The platform became **AWS-only** (`system.md`), so this story was re-architected from a long-running
+Railway container to an **EventBridge-scheduled Lambda** (`rate(1 minute)`). Everything below the
+frontmatter that says "Railway", "daemon", "self-scheduling loop", "container", or "IAM user" is the
+*original* plan; the shipped shape is:
+
+- The **handler is one poll cycle** — load state, poll each source, save state — with EventBridge as
+  the cadence. No `source-poller.ts` loop, no `backoff.ts`, no `Dockerfile`/`railway.json`. This also
+  **mooted the R1-4 concurrent-cursor-clobber**: a scheduled Lambda with
+  `reserved_concurrent_executions = 1` has no concurrent loops, so the single combined state object
+  is safe.
+- State (per-source cursor + dedupe set + a `notBefore` that honours `X-Poll-Interval`/`Retry-After`)
+  lives in **one S3 object** in the operational-state bucket, read once and written once per
+  invocation.
+- The two PATs live in **SSM SecureStrings** (aligned with the webhook secret), read fresh each
+  invocation. A token that cannot be read disables its own source and leaves the other running.
+- Terraform is `github-poller.tf` (Lambda + EventBridge rule + two SSM params + a least-privilege
+  **IAM role**, not a user — no long-lived keys). R1-7's bad `s3:prefix` condition is gone.
 
 ## Deferred verification — NOT met under the code-and-dry-run fence
 
-The fence forbids `terraform apply`, creating AWS resources, deploying to Railway, and calling the
-live GitHub API with a real PAT. These criteria are **unverified** — not failed, untested.
+The fence forbids `terraform apply`, creating AWS resources, deploying a Lambda, and calling the live
+GitHub API with a real PAT. These criteria are **unverified** — not failed, untested.
 
 | Acceptance criterion | Status | Command or step the user must run to close it |
 | :--- | :--- | :--- |
-| A real Notifications poll ingests inbox items into S3 | **Unverified** | issue a **classic** PAT with `notifications` scope, set the env from `apps/github-poller/setup.md` § 3, `pnpm --filter @personal-events/github-poller build && node apps/github-poller/dist/index.js`, and look for a `polled` line with `written > 0` |
-| A real Events API poll ingests activity items into S3 | **Unverified** | as above with `GITHUB_EVENTS_PAT` and `GITHUB_USERNAME` set |
-| A second poll immediately after yields **no** new objects (304 / dedupe) | **Unverified** | leave it running for two cycles; expect `nothing new` at `debug`, or `fetched > 0, fresh: 0` |
-| Conditional requests actually produce 304s against the live API | **Unverified** | `LOG_LEVEL=debug` and confirm `nothing new` lines appear after the first successful poll |
-| The classic-PAT constraint is real (a fine-grained PAT genuinely cannot call `/notifications`) | **Unverified** | set `GITHUB_NOTIFICATIONS_PAT` to a **fine-grained** token and confirm `poll failed` with HTTP 401/403 — documented from GitHub's docs, not exercised |
-| Rate-limit handling against a real 429 | **Unverified** | not reproducible on demand; the behaviour is covered by unit specs over scripted responses |
-| The IAM user's policy is sufficient and not excessive | **Unverified** | `terraform apply`, `aws iam create-access-key`, then a live poll; confirm the write succeeds and that `aws s3 ls` with the same key is **denied** |
-| Deployment to Railway | **Unverified** | `railway up` with `apps/github-poller/railway.json`; confirm `github poller started` and alternating 200/304 cycles in `railway logs` |
-| The Dockerfile builds | **Unverified** | `docker build -f apps/github-poller/Dockerfile .` from the repo root — Docker was not run under the fence |
-| Restart mid-run resumes from S3 state without re-notifying | **Unverified** | restart the deployed service and confirm the next cycle reports `fresh: 0` |
+| The deployed Lambda runs and reaches its first `poll complete` | **Unverified** | `pnpm --filter @personal-events/github-poller build && terraform -chdir=infra/personal-events apply -var github_username=<login>`, set the two SSM PATs (`apps/github-poller/setup.md` § 1), then `aws lambda invoke --function-name "$(terraform -chdir=infra/personal-events output -raw github_poller_function_name)" /dev/stdout` and check the log for `poll complete` |
+| A real Notifications poll ingests inbox items into S3 | **Unverified** | set the classic PAT param, invoke, and look for a `polled` line with `written > 0`, then `aws s3 ls s3://$(…event_bucket_name)/` |
+| A real Events API poll ingests activity items into S3 | **Unverified** | set the events PAT param + `github_username`, invoke, same check |
+| A second invocation yields **no** new objects (304 / dedupe) | **Unverified** | invoke twice; expect `nothing new` at `debug`, or `fetched > 0, fresh: 0` |
+| EventBridge actually fires the Lambda on schedule | **Unverified** | wait a few minutes after apply and confirm periodic invocations in the function's CloudWatch logs without manual `invoke` |
+| The classic-PAT constraint is real (a fine-grained PAT cannot call `/notifications`) | **Unverified** | put a **fine-grained** token in the notifications param and confirm `poll failed` HTTP 401/403 — documented from GitHub's docs, not exercised |
+| Rate-limit handling against a real 429 | **Unverified** | not reproducible on demand; covered by unit specs over scripted responses |
+| The IAM role is sufficient and not excessive | **Unverified** | after apply, confirm a poll writes an event and that the role cannot `GetObject` an event key (write-only) |
+| Restart/redeploy resumes from S3 state without re-notifying | **Unverified** | redeploy and confirm the next invocation reports `fresh: 0` |
+| `reserved_concurrent_executions = 1` prevents overlap | **Unverified** | `aws lambda get-function-concurrency` returns 1 |
 
 **No AWS resource was created. No PAT was requested, invented, or used. No call was made to
-api.github.com. Nothing was deployed to Railway.**
+api.github.com. Nothing was deployed.**
 
 ### What WAS verified
 

@@ -34,8 +34,10 @@ the classification machinery and nothing else.
   permanent history.
 - The **default** classification is mandatory in the schema. An unrecognised trigger is classified
   and written, never dropped.
-- `SourceAdapter` and `SecondaryProcessor` are **interfaces only**. No adapter and no processor is
-  implemented in the template, and nothing executes a secondary processor yet.
+- The template's seam is a **`Normalizer`** — a pure `(raw) => Either<NormalizedEvent, E>` function
+  type, which is what both edges actually compose. `SecondaryProcessor` is an **interface only**: no
+  processor is implemented and nothing executes one yet. (An earlier `SourceAdapter` interface,
+  implemented by nothing, was removed per the R1 review.)
 
 **The provider instance** is `@personal-events/github`: effect Schemas for the subset of each
 GitHub shape we read, a real `Schema.Union` of literal-tagged triggers (so a webhook `event`+`action`
@@ -49,12 +51,20 @@ question the user may not control:
 - **Webhook** — an API Gateway HTTP API in front of a Lambda (`apps/webhook-ingest`), verified with
   `X-Hub-Signature-256` HMAC over the raw body, deduped on `X-GitHub-Delivery`. Rich and real-time,
   but requires repo-admin or org-owner rights to configure.
-- **Poller** — a long-running Railway service (`apps/github-poller`) that conditionally polls the
-  Notifications inbox (which requires a **classic** PAT) and the Events API. Lower fidelity and
-  higher latency, but needs no administrative rights at all.
+- **Poller** — an **EventBridge-scheduled Lambda** (`apps/github-poller`, `rate(1 minute)`) that
+  conditionally polls the Notifications inbox (which requires a **classic** PAT) and the Events API,
+  reading and writing its cursor/dedupe state in the operational-state bucket each invocation. Lower
+  fidelity and higher latency, but needs no administrative rights at all.
 
 Both paths write through one shared `@personal-events/event-sink` `S3EventRepository`, so the
 object-key scheme and the write path exist exactly once.
+
+> **Revised 2026-07-21:** the poller was originally a long-running Railway container. The platform is
+> now AWS-only (see `system.md`), so it is a scheduled Lambda: EventBridge provides the cadence a
+> daemon loop used to, state persists in S3 (which a stateless invocation needs anyway), the PAT
+> lives in SSM like the webhook secret, and `reserved_concurrent_executions = 1` means two
+> invocations never overlap — the property that makes a single combined state object safe and that
+> mooted the concurrent-cursor-clobber the R1 review found in the daemon design.
 
 ## Context
 
@@ -82,18 +92,19 @@ Two further forces shaped the template's boundaries:
 
 - **New packages**: `@personal-events/integration-core`, `@personal-events/github`,
   `@personal-events/event-sink`. **New apps**: `apps/webhook-ingest` (Lambda),
-  `apps/github-poller` (Railway).
-- **`@personal-events/event-model`** is consumed, not changed: `integration-core` imports its field
-  schemas (`Priority`, `NoDotString`, `IsoInstant`) rather than restating the bounds, so the 1–8
-  range and the no-dot rule have exactly one home.
-- **Terraform** (`infra/personal-events`) gains a Lambda, an HTTP API, an ACM certificate and DNS
-  records under the delegated zone, an SSM SecureString parameter, an S3 lifecycle rule for delivery
-  markers, and a least-privilege IAM user for the Railway poller.
+  `apps/github-poller` (scheduled Lambda).
+- **`@personal-events/event-model`** gained a `producer` and an `eventId` field (see § "The overwrite collision — solved") — the one change to the load-bearing contract this feature makes; otherwise
+  it is consumed unchanged, with `integration-core` importing its field schemas (`Priority`,
+  `NoDotString`, `IsoInstant`) rather than restating the bounds.
+- **Terraform** (`infra/personal-events`) gains two Lambdas, an HTTP API, an ACM certificate and DNS
+  records under the delegated zone, an EventBridge schedule, three SSM SecureString parameters (a
+  webhook secret and two poller PATs), an S3 lifecycle rule for delivery markers, and two
+  least-privilege IAM roles.
 - **Every future integration** — Claude Code next — is a mapping config plus a normalizer against
   this template. If a future source cannot be expressed as `(channel, string fields) → output`, the
   template is what has to change, and that change ripples to every integration already built on it.
-- **Operators** gain two credentials to manage (a webhook HMAC secret in SSM, a classic PAT in
-  Railway) and one JSON file to tune classification in.
+- **Operators** gain three credentials to manage (a webhook HMAC secret and two poller PATs, all
+  SSM SecureStrings) and one JSON file to tune classification in.
 
 ## Alternatives & trade-offs
 
@@ -133,24 +144,47 @@ change to their consumers and nothing else. The *shape* of a mapping config, how
 operator-authored artifact per integration, and the `channel` vocabulary is baked into every
 config's `matchKey`s; changing either means rewriting every config in step.
 
-The dual path is genuinely two-way: each limb is independently deployable and independently
-removable, and neither is required for the other to work. Nothing written to S3 records which path
+The dual path is genuinely two-way: each limb (a Lambda behind an HTTP API; a scheduled Lambda) is
+independently deployable and independently removable, and neither is required for the other to work. Nothing written to S3 records which path
 produced it beyond the payload itself, so retiring a path leaves the history intact and readable.
 
-## Known limitation carried, not solved: same-instant siblings
+## The overwrite collision — solved; the ordering skip — decided, deferred
 
-The poller's Notifications path takes its `timestamp` from the item's `updated_at`, which GitHub
-emits at **second** precision. Normalised into the contract's mandatory three-digit millisecond
-fraction, every notification in a batch that shares a second shares a millisecond — so object keys
-that differ only in `name`/`priority` sort adjacently and, for a consumer using a bare high-water
-mark, indistinguishably by time.
+These began as one recorded hazard with two faces. The **overwrite** face is now fixed in the
+contract; the **ordering** face has a decided remedy that is a consumer-side change deferred to its
+own story.
 
-This is the ordering hazard already recorded in `packages/event-model/README.md` § "Key order is not
-write order" and in `.agents/plans/bootstrap-and-iac/feature.md` § Follow-up candidates — but for
-this producer same-instant siblings are the **norm rather than the coincidence**. It is recorded
-here and in `.agents/plans/github-integration/feature.md`; it is **not fixed here**, because the fix
-(a lookback poll window plus a delivered-key set) requires a product decision on delivery semantics
-— at-most-once versus retry-until-delivered versus quarantine-and-continue — that has not been made.
+### 1. Two distinct events sharing one key — SOLVED (`producer` + `eventId`)
+
+Both poller channels are second-precision (Notifications `updated_at`, Events `created_at`),
+classification comes from a config keyed on the notification `reason` alone, so two distinct items in
+the same second built a byte-identical `{timestamp}.{type}.{priority}.{source}.{name}.json` key and
+the second silently overwrote the first — permanent loss with no error. The R1 review found it;
+reproducing it against the built packages confirmed it.
+
+The event-model contract now carries **`producer`** (the logical origin) and **`eventId`** (the
+provider's own delivery/event id, else a content hash) in the body and the key
+(`…{name}.{producer}.{eventId}.json`). Two distinct items no longer collide, and a *re-delivery* of
+the same item rebuilds the same key — an idempotent overwrite with identical bytes. `parseEvent`
+re-validates the candidate, so a bad segment is a typed failure, not a corrupt object. This was a
+change to the load-bearing contract and was made on the user's explicit approval; Level 0's
+`event-model` and `desktop-notifier` were updated in step and stay green.
+
+### 2. The ordering skip is real, and the fix is decided but not built
+
+Even with distinct keys, two same-second siblings sort **adjacently**, so a consumer using a bare
+`StartAfter` high-water mark can advance past one it has not yet delivered — the ordering hazard from
+`packages/event-model/README.md` § "Key order is not write order" and
+`.agents/plans/bootstrap-and-iac/feature.md`. For this producer same-second siblings are the *norm*,
+not a coincidence, which is what makes it worth acting on.
+
+**Decided remedy (not built here):** a **consumer-side lookback window plus a delivered-key set** —
+`StartAfter = max(mark − lookbackWindow, seed)`, with a bounded set of already-delivered keys
+persisted in the consumer's state to suppress the re-reads the overlap produces. It is a change to the
+*consumer* (`apps/desktop-notifier` and any future reader), not to this feature's producers, so it is
+deferred to its own story — `.agents/plans/github-integration/feature.md` § Follow-up candidates
+records the approach. This is a *decision*, not an open question: the earlier at-most-once /
+retry-until-delivered / quarantine framing is resolved in favour of retry-with-lookback.
 
 ## References
 
