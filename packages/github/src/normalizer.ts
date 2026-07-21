@@ -32,9 +32,15 @@ export const githubPollerProducer = "github-poller"
 
 /**
  * `eventId` is the provider's own id — an `X-GitHub-Delivery`, a notification id, an activity id — so
- * a genuine re-delivery rebuilds the same key (idempotent) and two distinct items never collide.
- * `toDotSafe` is defensive: every id GitHub actually sends is already dot-free, but the key's no-dot
- * rule is absolute, so an id is normalised before it becomes a key segment.
+ * two distinct items never collide on their key. `toDotSafe` is defensive: every id GitHub actually
+ * sends is already dot-free, but the key's no-dot rule is absolute, so an id is normalised before it
+ * becomes a key segment.
+ *
+ * `toDotSafe` is **not injective** (`a.b`, `a b` and `a-b` all sanitise to `a-b`), so `eventId`'s
+ * distinctness guarantee assumes GitHub's ids stay distinct *after* sanitisation — which they do,
+ * being dot- and whitespace-free UUIDs and numeric strings. A future provider whose ids contain dots
+ * would need a **collision-safe** transform here (e.g. hex-encode, or `contentHashId`), not
+ * `toDotSafe`, or two distinct ids could sanitise to one key.
  */
 const toEventId = (providerId: string): string => toDotSafe(providerId)
 

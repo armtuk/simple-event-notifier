@@ -363,3 +363,226 @@ event-model contract change** (`producer` + `eventId`). Per-finding disposition:
 No finding was disputed. Full uncached `build`/`lint`/`test`/`typecheck` green (615 specs across 7
 packages); Level 0's specs still pass; `terraform fmt -check -recursive infra` and `validate` clean on
 both roots; a scratch `plan` is `41 to add, 0 to change, 0 to destroy`. Nothing applied or deployed.
+
+---
+
+## R2 — 2026-07-21 (post-rearchitecture)
+
+Reviewer: independent R2 (did not write the code, was not the R1 reviewer). Scope: `de0dbd9..HEAD`
+(five code/plan commits, ~2 600 insertions) — the **AWS-only re-architecture** of the poller
+(Railway container → EventBridge-scheduled Lambda), the **event-model contract change**
+(`producer` + `eventId` in body and object key), the **env-vocabulary change** (`development` /
+`production`; consumer poll 10 s), and the R1-fix round. Focus per the brief: the contract change
+(key injectivity, dotted-segment grammar, hash stability, redelivery idempotence), the re-arch
+(single-object state safety under `reserved_concurrent_executions = 1`), and an audit of every R1
+disposition.
+
+### Verification actually run by the reviewer (all green)
+
+| Command | Result |
+| :--- | :--- |
+| `pnpm install` | clean |
+| `pnpm build --force` | 7/7 tasks (exit 0) |
+| `pnpm lint --force` | 8/8 tasks (incl. `infra` → `terraform fmt -check`) (exit 0) |
+| `pnpm test --force` | **610 passed / 5 skipped** across 13 test tasks — matches the claim exactly |
+| `pnpm typecheck --force` | 12/12 tasks (exit 0) |
+| `terraform fmt -check -recursive infra` | clean |
+| `terraform validate` (bootstrap + personal-events) | Success / Success |
+
+Per-package: event-model **92**, integration-core 68, event-sink 29, desktop-notifier **92 (+5
+skipped)**, github 135, webhook-ingest 105, github-poller 89. **Level 0 is intact** — event-model 92
+and desktop-notifier 92+5 are exactly the claimed counts, and the contract change that touched them
+did not regress either. `turbo.json`'s two `#test` overrides depend on `["^build","build"]` with
+`tsup.config.ts` as an input, so both apps' `bundle.spec.ts` runs against a freshly-built artifact
+and a banner/`noExternal` change invalidates the cache — the false-green hole is covered for the new
+poller too.
+
+**Fence: clean.** No `terraform apply`/deploy/publish/push in the diff; no `*.tfstate`,
+`.terraform-artifacts/`, or committed zip; branch never pushed (no `origin/github-integration`); no
+real PAT anywhere (both SSM params are `placeholder-set-me-out-of-band` with `ignore_changes =
+[value]`). The lookback delivery fix is a **decided** follow-up (`feature.md` §1 → retry-with-lookback,
+consumer-side, its own story), not dropped and not half-implemented.
+
+### JOB 1 — the contract change (the load-bearing key)
+
+**The codec is injective and the grammar is sound.** `eventKeyPattern` is anchored, captures the
+timestamp as a fixed-width group, priority as a **single** digit (so `p05`≠`p5` cannot alias), and
+each of `type`/`source`/`name`/`producer`/`eventId` as `[^.]+`. With every middle segment dot-free
+and separated by literal dots, the seven-way split is unambiguous and `buildKey ∘ parseKey` is the
+identity. `event-key.spec.ts` pins round-trip, injectivity, and rejection of a dotted/extra/missing
+segment. I could not construct two distinct valid events colliding on one key.
+
+**The dotted-segment risk is contained by a real safety net, not by luck.** `NoDotString` rejects a
+`.`, and — crucially — `toEventObject` calls `encodeEventJson` (`Schema.encodeEither(EventSchema)`,
+which applies the `NoDotString` filter on **encode**) *before* `buildEventKey`, and only builds the
+key on success. So a dotted segment fails the whole batch as a visible `PutEventsFailure`, never a
+silently-mangled key. Both GitHub producers set dot-free values: webhook → `producer:"github-webhook"`
++ `eventId` from `x-github-delivery` (a UUID); poller → `producer:"github-poller"` + `eventId` from
+the notification/activity id; and `toEventId`/`toDotSafe` strips dots/whitespace defensively. The
+webhook path also **refuses** an empty delivery id (`github-integration.ts:66`) so `eventId` is never
+empty. This is solid.
+
+**`contentHashId` is not circular and not used by any producer in this feature.** It hashes the
+caller-supplied identifying content, never the whole event (which contains `eventId`), and grep
+confirms no producer calls it — GitHub always supplies an id. It is deterministic (no `Date.now`);
+its only stability caveat is that it is a `JSON.stringify` over the caller's object, so a future
+local producer must pass a fixed-key-order object (the spec documents this).
+
+**Two real, if latent, weaknesses in the contract — see findings R2-1 (major) and R2-2/R2-3 (minor/nit).**
+The headline is R2-1: the README and the `event.ts`/`event-key.ts` docblocks claim **redelivery is
+idempotent because the key rebuilds identically, making the webhook dedupe "an optimisation."** That
+is true for the *poller* (item-timestamped) but **false for the webhook** — its `timestamp` is
+`this.deps.now()` (`new Date().toISOString()`, re-evaluated per delivery), so a redelivery that
+bypasses the dedupe store (write succeeded, `dedupe.record` failed → 500 → GitHub redelivers) rebuilds
+a **different** key and creates a **duplicate**. For webhooks the dedupe store *is* the thing standing
+between you and duplicate history; the doc says the opposite, which is actively dangerous guidance.
+
+### JOB 2 — the re-architecture
+
+Coherent and correct. `reserved_concurrent_executions = 1` **is** set (`github-poller.tf:34`); the
+EventBridge rule + target + `aws_lambda_permission` (principal `events.amazonaws.com`, `source_arn`
+the rule ARN) are all present; the IAM **role** (not user) is least-privilege — `s3:PutObject` on the
+event log, `s3:GetObject`/`PutObject` on the single state key, `s3:ListBucket` on the event bucket
+**with no condition** (the R1-7 fix), `ssm:GetParameter` on exactly the two PAT params, and log
+writes. `pollOnce` loads the whole state **once** and saves it **once**, threading state through
+`reduce` so the two sources run strictly sequentially; the advance-after-write invariant holds
+(`source-cycle.ts` `onItems` returns the *unchanged* state on `PutEventsFailure`, so no cursor
+advances past an unwritten event; partial-batch writes are idempotent rewrites). With reserved
+concurrency 1 and a 30 s timeout inside a 60 s schedule, two invocations cannot overlap, so the single
+combined state object cannot suffer the lost update the old concurrent-loop design had — **R1-4 is
+genuinely mooted, not merely asserted.** Conditional-request state (`etag`/`lastModified`/`since`)
+persists in the state object's `SourceCursor`, and `X-Poll-Interval`/`Retry-After` become a
+`notBefore` honoured by `isDue` — the stateless-per-invocation ETag model is correct.
+
+### JOB 3 — R1 audit
+
+Every disposition holds. Spot-confirmed the ones most likely to be overstated:
+
+- **R1-1 (bundle).** The fix is real and the spec genuinely exercises the deployable artifact:
+  `bundle.spec.ts` copies `dist/` to a fresh `os.tmpdir()` directory **outside the repo**, spawns a
+  clean `node` process with `cwd` there and the env replaced (only `PATH`), and imports the emitted
+  `handler.js`. With no `node_modules` reachable, a missing `noExternal` fails on
+  `ERR_MODULE_NOT_FOUND` and a missing `createRequire` banner fails on `Dynamic require` — both are
+  asserted, for **both** apps. It would fail if the bundle were broken.
+- **R1-2 (collision).** Fixed in the contract and pinned by a guard that *can* fail:
+  `source-cycle.spec.ts:213` asserts `storedEventKeys(s3)` has length **2** for two same-second
+  same-reason mentions (and that both payload ids survive) — an assertion on stored objects, not on
+  put count, so it sees the old collapse.
+- **R1-3/6/11** — the Events-API immunity claim, the instant characterization, and the secret-repo
+  failure-mode docblock are all corrected and (3, 6) now discriminating.
+- **R1-5** — `EventBucketName`/`StateBucketName` are real `Schema.brand`s; the wiring guard lives in
+  `register.spec.ts`; typecheck (12/12) confirms the brands are threaded end-to-end.
+- **R1-7/8/9/10/13/14/15** — ListBucket no-condition; `source_arn = .../*/*`; `SourceAdapter` gone,
+  `Normalizer` type in; `matchKey` `encodeURIComponent`-escaped; `putObjects` bounded to
+  `putConcurrency`; Docker-only findings resolved with the Dockerfile.
+
+### JOB 4 — honesty & fence
+
+The CLAUDE.md env carve-out is **deleted** and the replacement note is **true**: `.agents/guidance/aws.md`
+requires at least `development`/`production`, and both Terraform roots
+(`contains(["development","production"])`) and all three app configs
+(`deploymentEnvs = {development, production}`, `Schema.Literal(...)`) match exactly — no new false
+claim. Three stale references survive the re-arch (findings R2-4/R2-5/R2-6). The `github-poller.tf:3`
+mention of "an earlier Railway container" is correct *historical* context, not stale.
+
+### DRY vs WET
+
+The one sharing decision that matters — `event-sink` as the **single** `PutObject` site and the object
+key defined **once** in `event-model` — is preserved through the re-arch; `source-cycle.ts` is still
+one cycle for both sources. The edge duplication R1 flagged did **not** shrink and slightly grew: the
+new `github-poller` config module re-declares `deploymentEnvs`/`logLevels`/`omitUndefined` (now three
+copies), the winston factory is in three, and the re-arch added a second near-identical
+`testing/run-bundle.ts` (`runNodeIn`) in each Lambda app. This is honestly tracked as `feature.md`
+follow-up #4, so it is a recorded debt rather than a hidden one — not a blocker, but the trend is the
+wrong way and the env vocabulary is the CLAUDE.md carve-out that exists precisely to stop those values
+drifting.
+
+### Verdict
+
+**No blocker. Merge-ready once R2-1's doc claim is corrected** (a false idempotency guarantee in the
+load-bearing contract README is the kind of thing the next consumer author will build on). The contract
+change is genuinely injective and collision-safe, the re-arch is coherent and correctly single-writer,
+Level 0 is intact, and every R1 fix holds or is legitimately mooted. The rest are staleness and a
+latent-guidance nit.
+
+### Findings
+
+| # | Severity | Category | Where |
+| :-- | :--- | :--- | :--- |
+| R2-1 | major | honesty | `packages/event-model/README.md:65-69` (+ `event-key.ts:15-19`, `event.ts:93-99`) |
+| R2-2 | minor | correctness | `packages/event-model/src/event.ts:87` |
+| R2-3 | nit | correctness | `packages/github/src/dot-safe.ts` / `normalizer.ts:39` |
+| R2-4 | minor | honesty | `packages/event-sink/src/s3-event-repository.ts:9` |
+| R2-5 | minor | honesty | `turbo.json:38` |
+| R2-6 | minor | honesty | `.agents/plans/github-integration/github-notifications-poller.md` § "What WAS verified" |
+
+**R2-1 — the contract README overclaims webhook redelivery idempotence.** README lines 65-69: "the
+*same* event redelivered (a GitHub manual redelivery …) rebuilds the *same* key and overwrites itself
+with identical bytes — not a duplicate. That is why the webhook handler's dedupe … [is] an
+optimisation …, not the thing standing between you and duplicate history: the key scheme is."
+The webhook event's `timestamp` is `this.deps.now()` (`register.ts:53` → `new Date().toISOString()`),
+re-evaluated on every delivery, and it leads the key. So a redelivery of delivery-id *X* that reaches
+`ingest` — which happens when the first delivery's `putEvents` succeeded but `dedupe.record` then
+threw (→ handler 500 → GitHub redelivers → `dedupe.seen(X)` is false) — normalizes with a **new**
+`receivedAt`, builds a **different** key (same `eventId`, different `{timestamp}`), and writes a
+**second** object. The dedupe store, not the key scheme, is what prevents webhook duplicates; the doc
+says the reverse and explicitly invites dropping dedupe as "an optimisation." True for the poller
+(item-timestamped, genuinely idempotent), false for the webhook. The same over-general claim is in
+`event-key.ts:15-19` and `event.ts:93-99`. Fix: scope the idempotency claim to content-timestamped
+producers (the poller/local agents) and state plainly that the webhook path's redelivery safety rests
+on the dedupe store, because its instant is wall-clock, not content-derived.
+
+**R2-2 — the `producer` docblock recommends `os.hostname()`, which `NoDotString` will reject.**
+`event.ts:87`: "a hostname for a local producer (`os.hostname()`)". `os.hostname()` commonly returns a
+dotted FQDN (`macbook.local`, `host.corp.example.com`); `producer` is `NoDotString`, so
+`encodeEvent` rejects it and **every** write from such a producer fails the batch. Not reachable in
+this feature (both GitHub producers use dot-free constants, and `valid-agent-notification.json` models
+the safe dash-joined `claude-code-mymachine`), but the contract's own guidance sets a trap for the
+next local producer — which is exactly the Claude Code integration this template exists to host. Fix:
+tell the caller to dot-sanitize the hostname (or point at `toDotSafe`), and say the constraint out
+loud.
+
+**R2-3 — `toEventId`/`toDotSafe` is non-injective, so `eventId`'s collision-prevention silently
+depends on provider ids being dot/space-free.** `toDotSafe` maps `a.b`, `a b`, and `a-b` all to
+`a-b`. `eventId` is the load-bearing thing that keeps distinct events apart (the R1-2 fix); if a
+future provider's ids can contain `.`/whitespace, two distinct items could collapse to one `eventId`
+and reintroduce the silent overwrite. Unreachable for GitHub (UUID/numeric ids), so a nit — but worth
+a one-line note in the docblock that the guarantee assumes already-distinct-after-sanitisation ids.
+
+**R2-4 — stale "Railway poller" in a shared package docblock.** `s3-event-repository.ts:9` still
+describes the second producer as "the Railway poller (AWE-157)"; it is now an EventBridge-scheduled
+Lambda. A one-word correction. (Pre-flagged in the brief; confirmed, and it is the only stale
+*code*-comment Railway reference — the `github-poller.tf:3` mention is deliberate historical context.)
+
+**R2-5 — stale "Docker image" in `turbo.json`.** The comment at `turbo.json:38` still says the two
+apps ship "a Lambda zip **and a Docker image**"; post-rearch both ship a Lambda zip. Cosmetic, but it
+is the rationale for a caching rule, so it should read true.
+
+**R2-6 — the poller plan's "What WAS verified" describes the deleted daemon.** The re-arch banner
+disclaims superseded content and the `## Deferred verification` **table** was correctly rewritten to
+Lambda reality (`aws lambda invoke`, `reserved_concurrent_executions = 1`, EventBridge, IAM role — no
+`railway up`). But the "### What WAS verified" prose immediately below still claims the binary was run
+"four times", that "both loops … cycle repeatedly … stop promptly on `SIGTERM`", the `unref` defect,
+and "**99 specs**" — none of which describe the shipped Lambda (no loops, no SIGTERM, 89 specs). It
+reads as present-tense evidence, not disclaimed history. Trim or re-label it so a reader does not take
+verification of a binary that no longer exists as current.
+
+---
+
+## R2 fix round — 2026-07-21 (disposition)
+
+Applied by the feature-execution agent. All doc-truth; no behaviour changed (the code was already
+correct — the docs over-claimed).
+
+| # | Sev | Disposition |
+| :-- | :-- | :--- |
+| R2-1 | major | **Fixed.** The idempotence claim is now **scoped to content-timestamped producers**. The webhook `timestamp` is a wall-clock `now()` re-read per delivery and leads the key, so a dedupe-bypassing redelivery writes a *different* key — a duplicate. Corrected in `README.md`, `event-key.ts` and `event.ts` to state plainly that the webhook path's redelivery safety rests on the `X-GitHub-Delivery` dedupe store (which is therefore **not** an optional optimisation), while the poller/local-agent paths are genuinely idempotent because their instant is item-derived. |
+| R2-2 | minor | **Fixed.** `event.ts`'s `producer` docblock no longer bare-recommends `os.hostname()` (commonly a dotted FQDN that `NoDotString` rejects); it now points the caller at `toDotSafe` and states the no-dot constraint. |
+| R2-3 | nit | **Fixed.** `toEventId`'s docblock now notes `toDotSafe` is non-injective, so `eventId`'s distinctness assumes ids that stay distinct after sanitisation; a provider with dotted ids needs a collision-safe transform (hex/`contentHashId`), not `toDotSafe`. GitHub's ids are unaffected. |
+| R2-4 | minor | **Fixed.** `event-sink/src/s3-event-repository.ts` — "the Railway poller (AWE-157)" → "the scheduled poller Lambda (AWE-157)". |
+| R2-5 | minor | **Fixed.** `turbo.json` comment "a Lambda zip and a Docker image" → both ship Lambda zips. |
+| R2-6 | minor | **Fixed.** AWE-157's `### What WAS verified` prose rewritten to the current Lambda specs (89, not 99) plus the composition-root/bundle specs; the deleted-daemon evidence (loops, SIGTERM, `unref`) is relabelled as **superseded history**, kept only to preserve how the defect was found. |
+| DRY | trend | **Recorded, not fixed.** `feature.md` § Follow-up candidates #4 now names all of it — environment vocabulary, winston factory, `capturingLogger`, **`httpStatusOf`** (4 copies, none exported → a genuine follow-up, confirmed not an import), **`run-bundle`** (2 copies) — and recommends a shared `@personal-events/app-support` package as its own story, before the Claude Code integration adds a fourth copy. |
+
+Nothing disputed. Full uncached `build`/`lint`/`test`/`typecheck` green (610 specs); Level 0 intact
+(event-model 92, desktop-notifier 92+5); `terraform fmt`/`validate` clean on both roots.

@@ -62,11 +62,20 @@ events can no longer build a byte-identical key: even when they share a timestam
 — the *norm* for the second-precision GitHub pollers, where every item in a poll batch shares a
 millisecond — their `eventId`s differ, and both objects survive.
 
-**Re-delivery is idempotent.** Because a provider's delivery id is stable, the *same* event
-redelivered (a GitHub manual redelivery, a poller re-reading an item it already wrote) rebuilds the
-*same* key and overwrites itself with identical bytes — not a duplicate. That is why the webhook
-handler's dedupe and the poller's seen-set are an optimisation (they save the redundant write), not
-the thing standing between you and duplicate history: the key scheme is.
+**Re-delivery is idempotent — but only for a content-timestamped producer.** Whether re-delivering
+the same event rebuilds the same key depends on whether **every** segment is derived from the item,
+and the leading `{timestamp}` is the catch. A producer whose `timestamp` comes from the item itself
+(the poller: `updated_at` / `created_at`; a local agent hashing its own content) rebuilds a
+byte-identical key, so re-delivery is a harmless overwrite and its seen-set is a pure optimisation.
+
+A producer whose `timestamp` is a **wall clock** re-read per delivery does **not** get this. The
+**webhook** handler stamps `timestamp` with `new Date().toISOString()` at receive time, because a
+webhook payload carries no reliable event-time — so a redelivery gets a *different* `{timestamp}`
+segment and therefore a *different* key: a **duplicate**, not an overwrite. For the webhook path the
+`X-GitHub-Delivery` dedupe store is **not** an optimisation — it is the thing standing between you
+and duplicate history, and must not be dropped. (`eventId` still does its job there: it keeps two
+*distinct* deliveries apart within a batch; it just cannot make a *wall-clock* redelivery idempotent
+by itself.)
 
 > This closes the *overwrite* collision. It does **not** close the separate *ordering* hazard below
 > (a consumer skipping a sibling that still exists) — that is a consumer-side lookback-window change,

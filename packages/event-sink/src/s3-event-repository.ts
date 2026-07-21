@@ -6,7 +6,7 @@ import { type EventObject, toEventObjects } from "./encode-events.ts"
 
 /**
  * The **only** place in the system that writes a canonical event to S3. Both producers go through
- * it — the webhook Lambda (AWE-156) and the Railway poller (AWE-157) — which is the point: the
+ * it — the webhook Lambda (AWE-156) and the scheduled poller Lambda (AWE-157) — which is the point: the
  * object key *is* the log's index, and two implementations of it would drift into silent, permanent
  * event loss rather than a visible error.
  *

@@ -411,33 +411,36 @@ GitHub API with a real PAT. These criteria are **unverified** — not failed, un
 **No AWS resource was created. No PAT was requested, invented, or used. No call was made to
 api.github.com. Nothing was deployed.**
 
-### What WAS verified
+### What WAS verified (current, post-re-architecture)
 
-- **The built binary was actually run**, four times, and that is what found the `unref` defect. With
-  no configuration it logs the missing fields and exits; with configuration and no tokens it reports
-  both sources disabled and starts nothing; with both tokens **pointed at `http://127.0.0.1:9`** (a
-  dead local port — deliberately, so no request left the machine) both loops start, cycle repeatedly,
-  back off on failure, keep the process alive, and stop promptly on `SIGTERM`.
-- **The S3 pre-flight was exercised against real AWS** with deliberately invalid credentials, and
-  produced the intended operator-readable line: *"event bucket is not usable … access denied — the
-  credentials in use are not allowed to write this bucket"*.
-- **99 specs**, covering: conditional headers per dialect; 200/304/401/403-with-budget/403-throttled/
-  429/5xx/non-array-body/transport-error → the right `PollResult`; `X-Poll-Interval` read from a 304;
-  a cursor not cleared by a 200 that omits it; dedupe across cycles and across a simulated restart;
-  the bounded seen-set evicting oldest-first; **a write failure not advancing the cursor, and the
-  same items retried next cycle**; a malformed item skipped while its siblings are written; the two
-  sources' state branches staying independent; back-off taking the largest signal and obeying a
-  `Retry-After` beyond the ceiling; the loop surviving a cycle that throws.
+- **89 specs** over the scheduled-Lambda poller, covering: the per-source cycle (pure over
+  `SourceState`, returning next-state + outcome); conditional headers per dialect;
+  200/304/401/403-with-budget/403-throttled/429/5xx/non-array-body/transport-error → the right
+  `PollResult`; `X-Poll-Interval`/`Retry-After` becoming a `notBefore` and `isDue` skipping until it
+  passes; a cursor not cleared by a 200 that omits it; dedupe across cycles and a simulated restart;
+  the bounded seen-set evicting oldest-first; **a write failure returning the unchanged state so the
+  cursor never advances past an unwritten event**; a malformed item skipped while its siblings are
+  written; the two sources' state branches staying independent through `pollOnce`; token resolution
+  from SSM with a failed read disabling only its own source; and a **`bundle.spec.ts`** that imports
+  the emitted `handler.js` from a directory with no `node_modules` (catching a broken Lambda zip).
+- **The Lambda's composition root was exercised** (`composition.spec.ts`, `poll-once.spec.ts`) with
+  faked S3/SSM clients and an injected clock — no timers, no network — including per-source
+  enablement and the bucket-probe *report* (reachable / unreachable / inconclusive).
 - **`terraform fmt -check -recursive`** clean, **`validate` Success** on both roots, and a real
-  scratch `plan`: **`Plan: 34 to add, 0 to change, 0 to destroy`** — AWE-156's 32 plus the poller's
-  IAM user and user policy. Nothing applied.
+  scratch `plan`: **`Plan: 41 to add, 0 to change, 0 to destroy`**. Nothing applied.
 
-### Validation actually run
+> **Superseded history (original Railway design).** The first pass built a long-running daemon and
+> found an `unref()` defect by running the built binary under four configurations; that binary,
+> its self-scheduling loop, its `SIGTERM` shutdown, and the "99 specs" that covered them **no longer
+> exist** — the re-architecture (above) replaced them with a Lambda handler. Kept here only so the
+> record of *how* the defect was found is not lost; it is not evidence for the shipped code.
+
+### Validation actually run (current)
 
 | Level | Command | Result |
 | :--- | :--- | :--- |
 | 1 — style | `pnpm --filter @personal-events/github-poller lint` | clean |
 | 2 — types | `pnpm --filter @personal-events/github-poller typecheck` | clean |
-| 3 — specs | `pnpm --filter @personal-events/github-poller test` | 99 passed |
-| 4 — binary | `node dist/index.js` under four configurations (see above) | starts, loops, backs off, shuts down cleanly |
-| 4 — infra | `fmt -check`, `validate` both roots, scratch `plan` | clean / Success / 34 to add |
+| 3 — specs | `pnpm --filter @personal-events/github-poller test` | 89 passed |
+| 4 — artifact | `bundle.spec.ts` imports the emitted `handler.js` from a dir with no `node_modules` | passes |
+| 4 — infra | `fmt -check`, `validate` both roots, scratch `plan` | clean / Success / 41 to add |

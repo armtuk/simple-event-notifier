@@ -15,8 +15,16 @@ import { type Event, type EventType, EventTypeSchema, IsoInstant, NoDotString, P
  * The trailing `{producer}.{eventId}` pair is what makes a key **identify an event**. Without it two
  * genuinely-distinct events that shared a timestamp and classification (the norm for the
  * second-precision GitHub pollers) built a byte-identical key and the second silently overwrote the
- * first. With it, a provider delivery id keeps distinct events apart and makes a *re-delivery* of the
- * same event rebuild the same key — an idempotent overwrite with identical bytes, not a duplicate.
+ * first. With it, a provider delivery id keeps distinct events apart within a batch.
+ *
+ * Whether a *re-delivery* of the same event rebuilds the same key depends on the **leading**
+ * `{timestamp}`, not on `{eventId}` alone. A content-timestamped producer (the poller's item
+ * `updated_at`/`created_at`; a local agent) rebuilds an identical key — an idempotent overwrite. The
+ * **webhook** handler stamps a wall-clock `timestamp` at receive time (its payload has no reliable
+ * event-time), so its redelivery gets a different `{timestamp}` and thus a different key — a
+ * duplicate, which the `X-GitHub-Delivery` dedupe store, not the key scheme, is what prevents. See
+ * `@personal-events/event-model` README § "Re-delivery is idempotent — but only for a
+ * content-timestamped producer".
  */
 
 export const eventKeySuffix = ".json"

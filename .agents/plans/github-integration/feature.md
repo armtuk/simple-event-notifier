@@ -257,13 +257,29 @@ mid-feature because it would move a Level 0 app's specs while this feature was i
 pointer in `event-sink`'s docblock claimed a follow-up existed here when none did (R1-12), so this is
 that entry.
 
-The same accretion shows up in the edges more broadly: `deploymentEnvs` / `logLevels` /
-`omitUndefined` are now declared in **three** app config modules, the winston factory in three, and
-`capturingLogger` in three testing modules. The environment vocabulary is the sharpest of these — it
-is a `CLAUDE.md` carve-out that exists precisely to stop the five values drifting, and it is now
-written out three times.
+The same accretion shows up across the app edges. Duplicated **three** times each (in
+`desktop-notifier`, `webhook-ingest`, `github-poller`):
 
-One "collapse the app edges onto shared modules" change covers all of it: a small shared
-runtime/config package holding the environment vocabulary, the log levels, the winston factory and
-the bucket probe, with `desktop-notifier`, `webhook-ingest` and `github-poller` all consuming it.
-Deferred rather than done here because it touches a Level 0 app.
+- the **environment vocabulary** (`deploymentEnvs` = `{ development, production }` + its
+  `Schema.Literal`) and `logLevels` / `omitUndefined` in the config modules,
+- the **winston factory** (`create*Logger`),
+- **`capturingLogger`** in the testing modules.
+
+Duplicated more widely still:
+
+- **`httpStatusOf`** — the `$metadata.httpStatusCode` reader — is re-implemented in **four** places
+  (`event-sink/src/s3-client.ts`, `webhook-ingest/.../delivery-dedupe-repository.ts`,
+  `github-poller/src/poller-state-repository.ts`, and `github-http.ts`'s status handling). None is
+  exported today, so this is a genuine follow-up, not a one-line import.
+- **`run-bundle.ts`** (the "spawn node in a dir with no `node_modules`" helper) exists in **two** copies
+  (`webhook-ingest` and `github-poller`), added by the two Lambda bundle specs.
+
+The AWS-only pivot *grew* this: the new poller config added a third copy of the environment
+vocabulary and a second `run-bundle.ts`.
+
+**Recommended fix (its own story, before the Claude Code integration adds a *fourth* copy):** a small
+shared **`@personal-events/app-support`** package holding the environment vocabulary, the log levels,
+the winston factory, the bucket probe, `httpStatusOf`, and (as a testing subpath) `capturingLogger` /
+`run-bundle`, consumed by all three current apps and the next. **Not done here** — it is a
+cross-package refactor that also touches a Level 0 app (`desktop-notifier`), so it warrants its own
+review rather than riding along in this feature.
