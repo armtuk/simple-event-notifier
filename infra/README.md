@@ -7,7 +7,7 @@ for why it is shaped this way.
 | Module | Kind | State | Creates | Applied |
 | :--- | :--- | :--- | :--- | :--- |
 | `bootstrap/` | root | local, then migrated into the bucket it creates | the Terraform remote-state bucket | once, by hand |
-| `personal-events/` | root | remote (S3 + `use_lockfile`) | the S3 event bucket, the operational-state bucket, the delegated hosted zone, the `NS` delegation in the parent zone, and the webhook ingest (Lambda + HTTP API + `hooks.` hostname + the GitHub secret) | on every change |
+| `personal-events/` | root | remote (S3 + `use_lockfile`) | the S3 event bucket, the operational-state bucket, the delegated hosted zone, the `NS` delegation in the parent zone, the webhook ingest (Lambda + HTTP API + `hooks.` hostname + the GitHub secret), and the github poller (an EventBridge-scheduled Lambda + its two SSM PAT parameters) | on every change |
 | `modules/hardened-bucket/` | shared | — | the bucket hardening both roots need: ACLs off, public access blocked four ways, versioned, SSE-S3, incomplete uploads reaped | called, never applied directly |
 
 `modules/hardened-bucket/` exists so "how we harden an S3 bucket" changes in one place. Only the
@@ -75,13 +75,13 @@ terraform -chdir=personal-events init -backend-config=backend.hcl
 
 ## Build before you plan
 
-The webhook-ingest Lambda's deployment package is the tsup bundle from `apps/webhook-ingest`, zipped
-by `data "archive_file"`. **Terraform reads that directory at plan time**, so a plan run before the
-bundle exists fails with *"error archiving directory: could not archive missing directory"* rather
-than producing an empty function.
+**Two** Lambdas' deployment packages are tsup bundles zipped by `data "archive_file"`, and Terraform
+reads those directories at **plan** time — so a plan before they are built fails with *"could not
+archive missing directory"* rather than producing empty functions. Build both first:
 
 ```bash
 pnpm --filter @personal-events/webhook-ingest build   # writes apps/webhook-ingest/dist
+pnpm --filter @personal-events/github-poller build     # writes apps/github-poller/dist
 terraform -chdir=personal-events plan
 ```
 

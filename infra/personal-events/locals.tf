@@ -10,6 +10,7 @@ locals {
 
   ingest_domain        = "${var.ingest_subdomain}.${local.system_domain}"
   ingest_function_name = "${var.subdomain}-webhook-ingest-${var.env}"
+  poller_function_name = "${var.subdomain}-github-poller-${var.env}"
 
   tags = merge({
     System      = var.subdomain

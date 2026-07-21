@@ -1,21 +1,18 @@
 {
   "name": "@personal-events/github-poller",
   "version": "0.0.1",
-  "description": "Long-running service that polls GitHub's Notifications inbox and Events API and writes canonical events to S3",
+  "description": "Scheduled Lambda that polls GitHub's Notifications inbox and Events API and writes canonical events to S3",
   "private": true,
   "type": "module",
-  "bin": {
-    "personal-events-github-poller": "./dist/index.js"
-  },
   "scripts": {
     "build": "tsup",
-    "start": "node dist/index.js",
     "lint": "biome check src/",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "catalog:",
+    "@aws-sdk/client-ssm": "catalog:",
     "@aws-sdk/credential-providers": "catalog:",
     "@personal-events/event-model": "workspace:*",
     "@personal-events/event-sink": "workspace:*",
@@ -26,6 +23,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "catalog:",
+    "@types/aws-lambda": "catalog:",
     "@types/node": "catalog:",
     "tsup": "catalog:",
     "typescript": "catalog:",

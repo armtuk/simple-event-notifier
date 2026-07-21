@@ -1,6 +1,6 @@
-# The webhook ingest function. It is the only compute in this root module: everything else the
-# system runs lives outside AWS (the desktop notifier on a laptop, the poller on Railway), because
-# the bucket is the system and the rest is producers and consumers of it.
+# The webhook ingest function. One of two Lambdas in this root module (the other is the github
+# poller, github-poller.tf); the only other producer, the desktop notifier, runs on a laptop. The
+# bucket is the system and the rest is producers and consumers of it.
 #
 # The deployment package is the tsup bundle from apps/webhook-ingest, zipped verbatim. `terraform
 # plan` therefore requires that the bundle already exist — see infra/README.md for the

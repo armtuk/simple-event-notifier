@@ -35,6 +35,23 @@
       "inputs": ["src/**", "exemplars/**", "vitest.config.ts", "package.json"],
       "outputs": []
     },
+    // These two apps ship a BUNDLE as their deployment artifact -- a Lambda zip and a Docker image,
+    // each carrying `dist/` and no `node_modules`. Their `bundle.spec.ts` runs that emitted file in
+    // a directory outside the repo, which is the only way to catch a bundle that resolves fine under
+    // vitest and dies on import in production (this happened twice: once from a missing
+    // `noExternal`, once from esbuild's CJS interop). So their tests depend on their OWN build, not
+    // just their dependencies' -- and `tsup.config.ts` is an input, because changing it changes the
+    // artifact under test.
+    "@personal-events/webhook-ingest#test": {
+      "dependsOn": ["^build", "build"],
+      "inputs": ["src/**", "vitest.config.ts", "tsup.config.ts", "package.json"],
+      "outputs": []
+    },
+    "@personal-events/github-poller#test": {
+      "dependsOn": ["^build", "build"],
+      "inputs": ["src/**", "vitest.config.ts", "tsup.config.ts", "package.json"],
+      "outputs": []
+    },
     // Both depend on `^build`, not `build`: `infra` has no build of its own, and the thing that
     // must exist first is a *dependency's* output -- the webhook-ingest bundle that
     // `data "archive_file"` zips. Terraform reads that directory at PLAN time, not just apply, so

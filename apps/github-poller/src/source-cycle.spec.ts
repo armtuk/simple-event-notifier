@@ -1,25 +1,22 @@
 import { readGithubExemplar } from "@personal-events/github/testing"
 import { describe, expect, it } from "vitest"
 import type { PollResult, SourceCursor } from "./poll-result.ts"
-import { emptyPollerState, type PollerState } from "./poller-state.ts"
-import { runSourceCycle } from "./source-cycle.ts"
+import { emptySourceState, type SourceState } from "./poller-state.ts"
+import { type CycleResult, runSourceCycle } from "./source-cycle.ts"
 import type { GithubSourceRepository } from "./source-repositories.ts"
 import { eventsSource, notificationsSource } from "./sources.ts"
 import {
   capturingLogger,
-  commandsNamed,
   compiledGithubConfig,
   entriesFor,
   eventPuts,
   eventRepositoryOver,
-  type FakeS3Options,
   fakeS3,
-  stateBucket,
-  stateKey,
-  stateRepositoryOver
+  storedEventKeys
 } from "./testing/poller-fixtures.ts"
 
 const signal = new AbortController().signal
+const NOW = Date.parse("2026-07-20T00:00:00.000Z")
 
 const scriptedRepository = (results: readonly PollResult[]): GithubSourceRepository & { cursors: SourceCursor[] } => {
   const cursors: SourceCursor[] = []
@@ -35,175 +32,187 @@ const scriptedRepository = (results: readonly PollResult[]): GithubSourceReposit
 
 const notificationItems = [readGithubExemplar("notification-review_requested.json"), readGithubExemplar("notification-mention.json")]
 
-const cycleFor = (results: readonly PollResult[], s3Options: FakeS3Options = {}, source = notificationsSource) => {
+/** The cycle is pure over `SourceState` — no state repo. The invocation owns load/save (poll-once). */
+const cycleFor = (results: readonly PollResult[], source = notificationsSource) => {
   const log = capturingLogger()
-  const s3 = fakeS3(s3Options)
+  const s3 = fakeS3()
   const repository = scriptedRepository(results)
   const cycle = runSourceCycle({
     source: source(repository, compiledGithubConfig),
-    state: stateRepositoryOver(s3, log.logger),
     events: eventRepositoryOver(s3),
     seenCap: 100,
     logger: log.logger,
-    signal
+    signal,
+    now: (): number => NOW
   })
   return { cycle, s3, log, repository }
 }
 
-const storedState = (s3: ReturnType<typeof fakeS3>): PollerState => JSON.parse(s3.stored.get(stateKey) ?? JSON.stringify(emptyPollerState))
-
 const itemsResult = (items: readonly unknown[], extra: Partial<PollResult> = {}): PollResult =>
   ({ status: "items", items, cursor: { lastModified: "Sun, 19 Jul 2026 19:02:11 GMT" }, ...extra }) as PollResult
 
+const run = async (
+  results: readonly PollResult[],
+  state: SourceState = emptySourceState,
+  source = notificationsSource
+): Promise<CycleResult & { s3: ReturnType<typeof fakeS3>; log: ReturnType<typeof capturingLogger> }> => {
+  const { cycle, s3, log } = cycleFor(results, source)
+  const result = await cycle(state)
+  return { ...result, s3, log }
+}
+
 describe("runSourceCycle — the happy path", () => {
   it("writes one canonical event per fresh item", async () => {
-    const { cycle, s3 } = cycleFor([itemsResult(notificationItems)])
-    const outcome = await cycle()
-    expect(outcome).toMatchObject({ failed: false, written: 2 })
+    const { outcome, s3 } = await run([itemsResult(notificationItems)])
+    expect(outcome).toStrictEqual({ failed: false, written: 2 })
     expect(eventPuts(s3)).toHaveLength(2)
   })
 
-  it("writes events into the event bucket and state into the state bucket", async () => {
-    const { cycle, s3 } = cycleFor([itemsResult(notificationItems)])
-    await cycle()
-    const buckets = new Set(commandsNamed(s3.commands, "PutObjectCommand").map(command => String(command.input.Bucket)))
-    expect([...buckets].toSorted()).toStrictEqual(["events.prod.personal-events.fifthdimensionengineering.com", stateBucket])
-  })
-
-  it("advances the cursor and the seen set after a successful write", async () => {
-    const { cycle, s3 } = cycleFor([itemsResult(notificationItems)])
-    await cycle()
-    expect(storedState(s3).notifications.cursor.lastModified).toBe("Sun, 19 Jul 2026 19:02:11 GMT")
-    expect(storedState(s3).notifications.seen).toHaveLength(2)
+  it("advances the cursor and the seen set in the returned state after a successful write", async () => {
+    const { next } = await run([itemsResult(notificationItems)])
+    expect(next.cursor.lastModified).toBe("Sun, 19 Jul 2026 19:02:11 GMT")
+    expect(next.seen).toHaveLength(2)
   })
 
   it("advances the since cursor to the newest updated_at in the page", async () => {
-    const { cycle, s3 } = cycleFor([itemsResult(notificationItems)])
-    await cycle()
-    expect(storedState(s3).notifications.cursor.since).toBe("2026-07-19T19:02:11Z")
+    const { next } = await run([itemsResult(notificationItems)])
+    expect(next.cursor.since).toBe("2026-07-19T19:02:11Z")
   })
 
-  it("passes the persisted cursor back on the next poll, so a restart resumes", async () => {
+  it("polls with the cursor it is given, so a resumed state resumes conditionally", async () => {
     const { cycle, repository } = cycleFor([itemsResult(notificationItems)])
-    await cycle()
-    await cycle()
-    expect(repository.cursors[1]?.lastModified).toBe("Sun, 19 Jul 2026 19:02:11 GMT")
+    await cycle({ cursor: { lastModified: "Sat, 18 Jul 2026 00:00:00 GMT" }, seen: [] })
+    expect(repository.cursors[0]?.lastModified).toBe("Sat, 18 Jul 2026 00:00:00 GMT")
   })
 
-  it("writes nothing the second time it sees the same page — dedupe across cycles", async () => {
-    const { cycle, s3 } = cycleFor([itemsResult(notificationItems)])
-    await cycle()
-    const after = eventPuts(s3).length
-    const second = await cycle()
-    expect(second.written).toBe(0)
-    expect(eventPuts(s3)).toHaveLength(after)
+  it("writes nothing the second time it sees the same page — dedupe across cycles by threading state", async () => {
+    const first = await run([itemsResult(notificationItems)])
+    const second = await run([itemsResult(notificationItems)], first.next)
+    expect(second.outcome.written).toBe(0)
+    expect(eventPuts(second.s3)).toHaveLength(0)
   })
 
   it("logs what it fetched, what was fresh, and what it wrote", async () => {
-    const { cycle, log } = cycleFor([itemsResult(notificationItems)])
-    await cycle()
+    const { log } = await run([itemsResult(notificationItems)])
     expect(entriesFor(log.captured, "polled")[0]).toMatchObject({ source: "notifications", fetched: 2, fresh: 2, written: 2 })
   })
 })
 
-describe("runSourceCycle — nothing to do", () => {
-  it("does no work and touches no state on a 304", async () => {
-    const { cycle, s3 } = cycleFor([{ status: "not-modified", pollIntervalMs: 120_000 }])
-    expect(await cycle()).toStrictEqual({ failed: false, written: 0, pollIntervalMs: 120_000 })
-    expect(commandsNamed(s3.commands, "PutObjectCommand")).toHaveLength(0)
+describe("runSourceCycle — server intervals become notBefore", () => {
+  it("records notBefore = now + X-Poll-Interval on a 304, so the source is skipped until then", async () => {
+    const { next, outcome } = await run([{ status: "not-modified", pollIntervalMs: 120_000 }])
+    expect(outcome).toStrictEqual({ failed: false, written: 0 })
+    expect(next.notBefore).toBe(new Date(NOW + 120_000).toISOString())
   })
 
-  it("carries the server's poll interval out so the loop can honour it", async () => {
-    const { cycle } = cycleFor([itemsResult([], { pollIntervalMs: 300_000 } as Partial<PollResult>)])
-    expect((await cycle()).pollIntervalMs).toBe(300_000)
+  it("records notBefore from a page's X-Poll-Interval too", async () => {
+    const { next } = await run([itemsResult([], { pollIntervalMs: 300_000 } as Partial<PollResult>)])
+    expect(next.notBefore).toBe(new Date(NOW + 300_000).toISOString())
   })
 
-  it("saves state even for an empty page, so the cursor still advances", async () => {
-    const { cycle, s3 } = cycleFor([itemsResult([])])
-    await cycle()
-    expect(storedState(s3).notifications.cursor.lastModified).toBe("Sun, 19 Jul 2026 19:02:11 GMT")
+  it("clears a stale notBefore when a poll succeeds without one", async () => {
+    const { next } = await run([itemsResult(notificationItems)], { cursor: {}, seen: [], notBefore: "2020-01-01T00:00:00.000Z" })
+    expect(next).not.toHaveProperty("notBefore")
   })
 })
 
 describe("runSourceCycle — failures", () => {
-  it("reports a rate limit as failed and passes Retry-After to the loop", async () => {
-    const { cycle, log } = cycleFor([{ status: "rate-limited", retryAfterMs: 60_000, message: "throttled" }])
-    expect(await cycle()).toStrictEqual({ failed: true, written: 0, retryAfterMs: 60_000 })
-    expect(entriesFor(log.captured, "rate limited by GitHub; backing off")[0]?.level).toBe("warn")
+  it("reports a rate limit as failed and defers the next poll via notBefore", async () => {
+    const { next, outcome, log } = await run([{ status: "rate-limited", retryAfterMs: 60_000, message: "throttled" }])
+    expect(outcome).toStrictEqual({ failed: true, written: 0 })
+    expect(next.notBefore).toBe(new Date(NOW + 60_000).toISOString())
+    expect(entriesFor(log.captured, "rate limited by GitHub; deferring the next poll")[0]?.level).toBe("warn")
   })
 
-  it("reports a poll failure without touching state", async () => {
-    const { cycle, s3, log } = cycleFor([{ status: "failure", message: "HTTP 502" }])
-    expect(await cycle()).toStrictEqual({ failed: true, written: 0 })
-    expect(commandsNamed(s3.commands, "PutObjectCommand")).toHaveLength(0)
+  it("returns the state unchanged on a poll failure, writing nothing", async () => {
+    const state: SourceState = { cursor: { etag: 'W/"x"' }, seen: ["a"] }
+    const { next, outcome, s3, log } = await run([{ status: "failure", message: "HTTP 502" }], state)
+    expect(outcome).toStrictEqual({ failed: true, written: 0 })
+    expect(next).toStrictEqual(state)
+    expect(eventPuts(s3)).toHaveLength(0)
     expect(entriesFor(log.captured, "poll failed")[0]?.level).toBe("error")
   })
 
-  it("does NOT advance the cursor when the write fails, so the items are retried", async () => {
-    const { cycle, s3, log } = cycleFor([itemsResult(notificationItems)], { failEventWrite: new Error("access denied") })
-    expect(await cycle()).toStrictEqual({ failed: true, written: 0 })
-    expect(s3.stored.has(stateKey)).toBe(false)
+  it("does NOT advance the cursor when the write fails — it returns the prior state so items are retried", async () => {
+    const prior: SourceState = { cursor: { lastModified: "old" }, seen: ["already"] }
+    const { cycle, log } = (() => {
+      const l = capturingLogger()
+      const s3 = fakeS3({ failEventWrite: new Error("access denied") })
+      return {
+        cycle: runSourceCycle({
+          source: notificationsSource(scriptedRepository([itemsResult(notificationItems)]), compiledGithubConfig),
+          events: eventRepositoryOver(s3),
+          seenCap: 100,
+          logger: l.logger,
+          signal,
+          now: (): number => NOW
+        }),
+        log: l
+      }
+    })()
+    const { next, outcome } = await cycle(prior)
+    expect(outcome).toStrictEqual({ failed: true, written: 0 })
+    expect(next).toStrictEqual(prior)
     expect(entriesFor(log.captured, "could not write events; NOT advancing the cursor so they are retried")[0]?.level).toBe("error")
-  })
-
-  it("retries the same items on the next cycle after a write failure — nothing was deduped away", async () => {
-    const { cycle, s3 } = cycleFor([itemsResult(notificationItems)], { failEventWrite: new Error("denied") })
-    await cycle()
-    await cycle()
-    // Two items attempted twice: the seen-set never advanced, so the second cycle saw them as fresh.
-    expect(eventPuts(s3)).toHaveLength(4)
-    expect(s3.stored.has(stateKey)).toBe(false)
   })
 
   it("skips a malformed item, naming it, and still writes its healthy siblings", async () => {
     const mixed = [readGithubExemplar("notification-mention.json"), { id: "broken-1", reason: "mention" }]
-    const { cycle, s3, log } = cycleFor([itemsResult(mixed)])
-    expect((await cycle()).written).toBe(1)
+    const { outcome, s3, log } = await run([itemsResult(mixed)])
+    expect(outcome.written).toBe(1)
     expect(eventPuts(s3)).toHaveLength(1)
     expect(entriesFor(log.captured, "skipping unprocessable item")[0]).toMatchObject({ source: "notifications", itemId: "broken-1" })
   })
 
   it("a page of nothing but malformed items is not a failure — it is a page with no events in it", async () => {
-    const { cycle, s3 } = cycleFor([itemsResult([{ nonsense: true }])])
-    expect(await cycle()).toMatchObject({ failed: false, written: 0 })
-    expect(s3.stored.has(stateKey)).toBe(true)
+    const { outcome, next } = await run([itemsResult([{ nonsense: true }])])
+    expect(outcome).toMatchObject({ failed: false, written: 0 })
+    expect(next.cursor.lastModified).toBe("Sun, 19 Jul 2026 19:02:11 GMT")
   })
 })
 
 describe("runSourceCycle — the events source uses the same machinery", () => {
   it("classifies and writes activity items", async () => {
     const items = [readGithubExemplar("events-api-pull_request-opened.json"), readGithubExemplar("events-api-push.json")]
-    const { cycle, s3 } = cycleFor([itemsResult(items)], {}, eventsSource)
-    expect((await cycle()).written).toBe(2)
+    const { outcome, s3 } = await run([itemsResult(items)], emptySourceState, eventsSource)
+    expect(outcome.written).toBe(2)
     expect(eventPuts(s3)).toHaveLength(2)
   })
 
-  it("writes into its own branch of the state object, leaving the sibling source untouched", async () => {
-    const items = [readGithubExemplar("events-api-push.json")]
-    const initial: PollerState = {
-      notifications: { cursor: { since: "2026-07-01T00:00:00Z" }, seen: ["keep-me"] },
-      events: { cursor: {}, seen: [] }
-    }
-    const { cycle, s3 } = cycleFor([itemsResult(items)], { initialState: initial }, eventsSource)
-    await cycle()
-    expect(storedState(s3).notifications).toStrictEqual(initial.notifications)
-    expect(storedState(s3).events.seen).toStrictEqual(["56138221773"])
-  })
-
   it("does not set a since cursor, because the Events API has no such parameter", async () => {
-    const { cycle, s3 } = cycleFor([itemsResult([readGithubExemplar("events-api-push.json")])], {}, eventsSource)
-    await cycle()
-    expect(storedState(s3).events.cursor.since).toBeUndefined()
+    const { next } = await run([itemsResult([readGithubExemplar("events-api-push.json")])], emptySourceState, eventsSource)
+    expect(next.cursor.since).toBeUndefined()
+  })
+})
+
+/**
+ * ## Characterization: two events, one object key — the R1-2 collision
+ *
+ * The S3 object key carries **no per-item identity** (in this commit — the event-model contract
+ * change that adds `producer`/`eventId` and fixes it lands next), so two distinct notifications with
+ * the same `reason` in the same second produce a byte-identical key and the second overwrites the
+ * first. These specs assert on **stored keys**, not on `PutObjectCommand` count, because counting
+ * puts cannot see the collapse. They flip to asserting two surviving objects once the contract
+ * change lands.
+ */
+describe("runSourceCycle — two same-second, same-reason items collapse onto one key (characterization)", () => {
+  const sameSecondMention = (id: string, title: string): unknown => ({
+    id,
+    reason: "mention",
+    updated_at: "2026-07-19T19:02:11Z",
+    subject: { title, type: "Issue", url: `https://api.github.com/repos/o/r/issues/${id}` },
+    repository: { full_name: "o/r" }
   })
 
-  it("keeps the two sources' dedupe sets independent, so an overlapping item is written by both", async () => {
-    const s3Options = { initialState: { notifications: { cursor: {}, seen: [] }, events: { cursor: {}, seen: [] } } as PollerState }
-    const notifications = cycleFor([itemsResult([readGithubExemplar("notification-review_requested.json")])], s3Options)
-    await notifications.cycle()
-    expect(eventPuts(notifications.s3)).toHaveLength(1)
+  const twoMentions = [sameSecondMention("111", "first distinct mention"), sameSecondMention("222", "second distinct mention")]
 
-    const events = cycleFor([itemsResult([readGithubExemplar("events-api-pull_request-opened.json")])], s3Options, eventsSource)
-    await events.cycle()
-    expect(eventPuts(events.s3)).toHaveLength(1)
+  it("writes both events and reports success", async () => {
+    const { outcome } = await run([itemsResult(twoMentions)])
+    expect(outcome).toMatchObject({ failed: false, written: 2 })
+  })
+
+  it("leaves only ONE object in the bucket: the second overwrote the first", async () => {
+    const { s3 } = await run([itemsResult(twoMentions)])
+    expect(storedEventKeys(s3)).toStrictEqual(["2026-07-19T19:02:11.000Z.alert.p4.github.mention.json"])
   })
 })

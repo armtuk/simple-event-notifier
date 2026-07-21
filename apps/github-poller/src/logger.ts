@@ -2,15 +2,15 @@ import { createLogger, format, type Logger, transports } from "winston"
 import type { DeploymentEnv, LogLevel } from "./config.ts"
 
 /**
- * One JSON object per line to stdout — which is what Railway captures and indexes, so here the
+ * One JSON object per line to stdout — which is what CloudWatch captures for a Lambda, so the
  * console stream **is** the machine-consumed record and there is no readable/JSON split to make.
  *
  * Every line carries `service`, `env` and a timestamp with milliseconds per
- * `.agents/guidance/logging.md`; the per-source loggers add `source` so a `notifications` line and
- * an `events` line are never confused in a stream that interleaves both.
+ * `.agents/guidance/logging.md`; per-cycle lines add `source` so a `notifications` line and an
+ * `events` line are never confused when one invocation polls both.
  *
- * **No line ever carries a token.** The repositories are given a token and never log the object
- * they were configured with — the closest they come is reporting the *presence* of a source.
+ * **No line ever carries a token.** A token is read from SSM and passed to a source repository; the
+ * closest any log line comes is naming the *SSM parameter* that failed to read, never its value.
  */
 
 export const pollerServiceName = "github-poller"

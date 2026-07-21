@@ -1,5 +1,6 @@
 import { S3Client } from "@aws-sdk/client-s3"
 import { SSMClient } from "@aws-sdk/client-ssm"
+import type { StateBucketName } from "@personal-events/event-sink"
 import { loadGithubConfig } from "@personal-events/github"
 import { Either } from "effect"
 import type { IntegrationFactory } from "../../composition.ts"
@@ -21,7 +22,7 @@ import { WebhookSecretRepository } from "./webhook-secret-repository.ts"
 export interface GithubRegistrationConfig {
   readonly region: string
   readonly secretParameterName: string
-  readonly stateBucketName: string
+  readonly stateBucketName: StateBucketName
   readonly deliveryPrefix: string
 }
 

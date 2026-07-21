@@ -1,4 +1,5 @@
 import { HeadObjectCommand, PutObjectCommand, type S3Client } from "@aws-sdk/client-s3"
+import type { StateBucketName } from "@personal-events/event-sink"
 
 /**
  * Delivery-level idempotency, as tiny marker objects. GitHub does not automatically retry a failed
@@ -35,7 +36,11 @@ export interface DedupeOutcome {
 export class DeliveryDedupeRepository {
   constructor(
     public client: S3Client,
-    public bucket: string,
+    /**
+     * Branded `StateBucketName`, so passing the event bucket here is a **compile error** rather
+     * than the silent, permanent consumer outage described below.
+     */
+    public bucket: StateBucketName,
     public prefix: string
   ) {}
 

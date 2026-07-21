@@ -6,27 +6,32 @@ import { Either } from "effect"
 import type { Logger } from "winston"
 import { partitionFresh } from "./dedupe.ts"
 import type { PollResult } from "./poll-result.ts"
-import { advancedCursor, stateFor, withSourceState } from "./poller-state.ts"
-import type { PollerStateRepository } from "./poller-state-repository.ts"
+import { advancedCursor, type SourceState, withNotBefore } from "./poller-state.ts"
 import type { GithubSourceRepository, SourceName } from "./source-repositories.ts"
 
 /**
- * One poll cycle, written **once** for both sources. The notifications and events cycles differ in
- * exactly three pure functions — how an item is keyed, how it is normalized, and how the `since`
- * cursor advances — so they are parameters, not two near-identical files that drift apart.
+ * One poll cycle for one source, written **once** for both. The notifications and events cycles
+ * differ in exactly three pure functions — how an item is keyed, how it is normalized, and how the
+ * `since` cursor advances — so they are parameters, not two near-identical files that drift apart.
  *
- * Gather (load state, conditional GET) → Compute (dedupe, normalize, classify) → Persist (write
- * events, then save state), with the phases in separate collaborators.
+ * It is **pure over the source's state**: it takes the current `SourceState` and returns the next
+ * one, doing no S3 read or write of state itself. The invocation reads and writes the whole state
+ * object once (`poll-once.ts`), so putting a load/save inside the cycle would break the
+ * single-read/single-write property that makes one combined state object safe.
  *
  * ## The invariant that keeps events from being lost
  *
- * **State advances only after a successful write.** A persist failure returns without saving, so the
- * same items are re-fetched next cycle and retried. The opposite order — save the cursor, then
- * write — turns one transient S3 error into permanently missing events, with a cursor claiming they
- * were handled.
+ * **The cursor and seen-set advance only after a successful write.** On a persist failure the cycle
+ * returns the *unchanged* state, so the same items are re-fetched next invocation and retried. The
+ * opposite order — advance the cursor, then write — turns one transient S3 error into permanently
+ * missing events with a cursor claiming they were handled.
  *
- * A **malformed item** is different: it is logged with its id and skipped, and does *not* hold up
- * its siblings, because it will never become valid and retrying it forever would wedge the source.
+ * A **malformed item** is different: it is logged with its id and skipped, and does not hold up its
+ * siblings, because it will never become valid and retrying it forever would wedge the source.
+ *
+ * `notBefore` is how a stateless, scheduled function honours a server interval it cannot sleep for:
+ * a `304`/`200` carrying `X-Poll-Interval`, or a `429`/`403` carrying `Retry-After`, records "do not
+ * poll before now + that", and `poll-once.ts` skips the source until then.
  */
 
 export interface SourceDefinition {
@@ -41,58 +46,59 @@ export interface SourceDefinition {
 
 export interface CycleDeps {
   readonly source: SourceDefinition
-  readonly state: PollerStateRepository
   readonly events: S3EventRepository
   readonly seenCap: number
   readonly logger: Logger
   readonly signal: AbortSignal
+  /** Injected so the `notBefore` arithmetic is testable without a real clock. */
+  readonly now: () => number
 }
 
 export interface CycleOutcome {
-  readonly pollIntervalMs?: number
-  readonly retryAfterMs?: number
   readonly failed: boolean
   readonly written: number
 }
 
-export const runSourceCycle = (deps: CycleDeps) => async (): Promise<CycleOutcome> => {
-  const state = await deps.state.load()
-  const result = await deps.source.repository.poll(stateFor(state, deps.source.name).cursor, deps.signal)
-  const handlers: Record<PollResult["status"], () => Promise<CycleOutcome>> = {
-    "not-modified": async (): Promise<CycleOutcome> => onNotModified(deps, result),
-    "rate-limited": async (): Promise<CycleOutcome> => onRateLimited(deps, result),
-    failure: async (): Promise<CycleOutcome> => onFailure(deps, result),
-    items: async (): Promise<CycleOutcome> => onItems(deps, result, state)
-  }
-  return handlers[result.status]()
+export interface CycleResult {
+  readonly next: SourceState
+  readonly outcome: CycleOutcome
 }
 
-const onNotModified = (deps: CycleDeps, result: PollResult): CycleOutcome => {
+export const runSourceCycle =
+  (deps: CycleDeps) =>
+  async (state: SourceState): Promise<CycleResult> => {
+    const result = await deps.source.repository.poll(state.cursor, deps.signal)
+    const handlers: Record<PollResult["status"], () => Promise<CycleResult>> = {
+      "not-modified": async (): Promise<CycleResult> => onNotModified(deps, result, state),
+      "rate-limited": async (): Promise<CycleResult> => onRateLimited(deps, result, state),
+      failure: async (): Promise<CycleResult> => onFailure(deps, result, state),
+      items: async (): Promise<CycleResult> => onItems(deps, result, state)
+    }
+    return handlers[result.status]()
+  }
+
+const onNotModified = (deps: CycleDeps, result: PollResult, state: SourceState): CycleResult => {
   deps.logger.debug("nothing new", { source: deps.source.name })
-  return { failed: false, written: 0, ...(result.status === "not-modified" ? optional("pollIntervalMs", result.pollIntervalMs) : {}) }
+  const pollIntervalMs = result.status === "not-modified" ? result.pollIntervalMs : undefined
+  return { next: withNotBefore(state, deps.now(), pollIntervalMs), outcome: { failed: false, written: 0 } }
 }
 
-const onRateLimited = (deps: CycleDeps, result: PollResult): CycleOutcome => {
+const onRateLimited = (deps: CycleDeps, result: PollResult, state: SourceState): CycleResult => {
   const rateLimited = result.status === "rate-limited" ? result : undefined
-  deps.logger.warn("rate limited by GitHub; backing off", { source: deps.source.name, reason: rateLimited?.message })
-  return { failed: true, written: 0, ...optional("retryAfterMs", rateLimited?.retryAfterMs) }
+  deps.logger.warn("rate limited by GitHub; deferring the next poll", { source: deps.source.name, reason: rateLimited?.message })
+  return { next: withNotBefore(state, deps.now(), rateLimited?.retryAfterMs), outcome: { failed: true, written: 0 } }
 }
 
-const onFailure = (deps: CycleDeps, result: PollResult): CycleOutcome => {
+const onFailure = (deps: CycleDeps, result: PollResult, state: SourceState): CycleResult => {
   deps.logger.error("poll failed", { source: deps.source.name, reason: result.status === "failure" ? result.message : "" })
-  return { failed: true, written: 0 }
+  return { next: state, outcome: { failed: true, written: 0 } }
 }
 
-const onItems = async (
-  deps: CycleDeps,
-  result: PollResult,
-  state: Awaited<ReturnType<PollerStateRepository["load"]>>
-): Promise<CycleOutcome> => {
+const onItems = async (deps: CycleDeps, result: PollResult, state: SourceState): Promise<CycleResult> => {
   if (result.status !== "items") {
-    return { failed: true, written: 0 }
+    return { next: state, outcome: { failed: true, written: 0 } }
   }
-  const sourceState = stateFor(state, deps.source.name)
-  const { fresh, nextSeen } = partitionFresh(result.items, sourceState.seen, deps.source.keyOf, deps.seenCap)
+  const { fresh, nextSeen } = partitionFresh(result.items, state.seen, deps.source.keyOf, deps.seenCap)
   const events = collectEvents(deps, fresh)
   const written = await deps.events.putEvents(events)
   if (written._tag === "PutEventsFailure") {
@@ -101,13 +107,17 @@ const onItems = async (
       bucket: written.bucket,
       reason: written.message
     })
-    return { failed: true, written: 0 }
+    return { next: state, outcome: { failed: true, written: 0 } }
   }
-  await deps.state.save(
-    withSourceState(state, deps.source.name, { cursor: advancedCursor(result.cursor, deps.source.nextSince(result.items)), seen: nextSeen })
-  )
   deps.logger.info("polled", { source: deps.source.name, fetched: result.items.length, fresh: fresh.length, written: written.count })
-  return { failed: false, written: written.count, ...optional("pollIntervalMs", result.pollIntervalMs) }
+  return {
+    next: withNotBefore(
+      { cursor: advancedCursor(result.cursor, deps.source.nextSince(result.items)), seen: nextSeen },
+      deps.now(),
+      result.pollIntervalMs
+    ),
+    outcome: { failed: false, written: written.count }
+  }
 }
 
 /**
@@ -134,7 +144,3 @@ const toEventOrReason = (deps: CycleDeps, item: unknown): Either.Either<Event, S
       ? { itemId: failure.itemId, reason: failure.reason }
       : { itemId: deps.source.keyOf(item), reason: failure.reason }
   )
-
-/** `exactOptionalPropertyTypes`: build the key only when there is a value for it. */
-const optional = <K extends string>(key: K, value: number | undefined): Partial<Record<K, number>> =>
-  value === undefined ? {} : ({ [key]: value } as Record<K, number>)

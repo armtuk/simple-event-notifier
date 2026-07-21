@@ -1,3 +1,4 @@
+import { EventBucketName, StateBucketName } from "@personal-events/event-sink"
 import { Either, ParseResult, Schema } from "effect"
 
 /**
@@ -9,8 +10,10 @@ import { Either, ParseResult, Schema } from "effect"
  * missing token disables **that source** and leaves the other running. It is never a startup
  * failure, because refusing to start would take away the working half too.
  *
- * `env` uses the project's one environment vocabulary; the reason for the single spelling is in
- * `CLAUDE.md` § Documented carve-outs.
+ * The tokens themselves are **not** in the environment: the env carries the **SSM parameter names**
+ * (`*_PAT_PARAM`), and the values are read from SSM SecureStrings at invocation time, aligned with
+ * how the webhook handler stores its HMAC secret. A source is "configured" when its parameter name
+ * is present; whether its token can actually be read is decided per invocation in `composition.ts`.
  */
 
 export const deploymentEnvs = { local: "local", dev: "dev", qa: "qa", staging: "staging", prod: "prod" } as const
@@ -27,31 +30,26 @@ export const pollerConfigDefaults = {
   env: deploymentEnvs.prod,
   stateKey: "state/github-poller.json",
   githubApiBaseUrl: "https://api.github.com",
-  // GitHub's own `X-Poll-Interval` is 60s for the Notifications inbox and is honoured as a floor on
-  // every response; this is only the interval when the header is absent.
-  notificationsIntervalMs: 60_000,
-  // The Events API's own latency is 30s–6h, so polling it faster than a minute buys nothing.
-  eventsIntervalMs: 300_000,
-  maxBackoffMs: 900_000,
-  seenCap: 1_000
+  seenCap: 1_000,
+  // A hung GitHub call must not burn the whole Lambda budget: the fetch is aborted after this.
+  fetchTimeoutMs: 20_000
 } as const
 
 const PositiveInt = /*#__PURE__*/ Schema.NumberFromString.pipe(Schema.int(), Schema.positive())
 
 const PollerConfigSchema = /*#__PURE__*/ Schema.Struct({
-  eventBucketName: Schema.NonEmptyString,
+  eventBucketName: EventBucketName,
   /** Cursors and dedupe sets live in the **operational-state** bucket — never the event bucket. */
-  stateBucketName: Schema.NonEmptyString,
+  stateBucketName: StateBucketName,
   stateKey: Schema.NonEmptyString,
   region: Schema.NonEmptyString,
   githubApiBaseUrl: Schema.NonEmptyString,
   githubUsername: Schema.NonEmptyString,
-  notificationsToken: Schema.optionalWith(Schema.NonEmptyString, { exact: true }),
-  eventsToken: Schema.optionalWith(Schema.NonEmptyString, { exact: true }),
-  notificationsIntervalMs: PositiveInt,
-  eventsIntervalMs: PositiveInt,
-  maxBackoffMs: PositiveInt,
+  /** SSM parameter names, not token values. Presence enables the source; the value is read at runtime. */
+  notificationsTokenParam: Schema.optionalWith(Schema.NonEmptyString, { exact: true }),
+  eventsTokenParam: Schema.optionalWith(Schema.NonEmptyString, { exact: true }),
   seenCap: PositiveInt,
+  fetchTimeoutMs: PositiveInt,
   logLevel: Schema.Literal(logLevels.error, logLevels.warn, logLevels.info, logLevels.debug),
   env: Schema.Literal(deploymentEnvs.local, deploymentEnvs.dev, deploymentEnvs.qa, deploymentEnvs.staging, deploymentEnvs.prod)
 }).annotations({ identifier: "PollerConfig" })
@@ -66,10 +64,10 @@ export const parsePollerConfig = (env: Environment): Either.Either<PollerConfig,
     error => `Invalid github-poller configuration: ${ParseResult.TreeFormatter.formatErrorSync(error)}`
   )
 
-/** Which sources this configuration can actually run — the answer is "whichever has a token". */
-export const enabledSources = (config: PollerConfig): { readonly notifications: boolean; readonly events: boolean } => ({
-  notifications: config.notificationsToken !== undefined,
-  events: config.eventsToken !== undefined
+/** Which sources this configuration can attempt — the answer is "whichever has a token parameter". */
+export const configuredSources = (config: PollerConfig): { readonly notifications: boolean; readonly events: boolean } => ({
+  notifications: config.notificationsTokenParam !== undefined,
+  events: config.eventsTokenParam !== undefined
 })
 
 const toConfigFields = (env: Environment): Record<string, unknown> =>
@@ -80,12 +78,10 @@ const toConfigFields = (env: Environment): Record<string, unknown> =>
     region: env.AWS_REGION ?? env.AWS_DEFAULT_REGION ?? pollerConfigDefaults.region,
     githubApiBaseUrl: env.GITHUB_API_BASE_URL ?? pollerConfigDefaults.githubApiBaseUrl,
     githubUsername: env.GITHUB_USERNAME,
-    notificationsToken: env.GITHUB_NOTIFICATIONS_PAT,
-    eventsToken: env.GITHUB_EVENTS_PAT,
-    notificationsIntervalMs: env.NOTIFICATIONS_INTERVAL_MS ?? String(pollerConfigDefaults.notificationsIntervalMs),
-    eventsIntervalMs: env.EVENTS_INTERVAL_MS ?? String(pollerConfigDefaults.eventsIntervalMs),
-    maxBackoffMs: env.MAX_BACKOFF_MS ?? String(pollerConfigDefaults.maxBackoffMs),
+    notificationsTokenParam: env.GITHUB_NOTIFICATIONS_PAT_PARAM,
+    eventsTokenParam: env.GITHUB_EVENTS_PAT_PARAM,
     seenCap: env.SEEN_CAP ?? String(pollerConfigDefaults.seenCap),
+    fetchTimeoutMs: env.FETCH_TIMEOUT_MS ?? String(pollerConfigDefaults.fetchTimeoutMs),
     logLevel: env.LOG_LEVEL ?? pollerConfigDefaults.logLevel,
     env: env.ENV ?? pollerConfigDefaults.env
   })

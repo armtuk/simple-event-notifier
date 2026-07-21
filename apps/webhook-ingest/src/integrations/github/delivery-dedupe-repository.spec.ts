@@ -11,7 +11,13 @@ describe("DeliveryDedupeRepository", () => {
     expect(fakeAws().dedupe.keyFor("abc-123")).toBe("deliveries/github/abc-123")
   })
 
-  it("uses the state bucket, never the event bucket — a marker there would strand every consumer", () => {
+  /**
+   * Note this asserts only that the constructor stores its argument — the *wiring* decision it
+   * guards is made in `register.ts`, and is pinned in `register.spec.ts` where passing the wrong
+   * bucket actually fails. Both live alongside the compile-time guarantee: `bucket` is a branded
+   * `StateBucketName`, so the event bucket cannot reach it at all.
+   */
+  it("addresses markers in the bucket it was constructed with", () => {
     expect(fakeAws().dedupe.bucket).toBe(stateBucket)
   })
 

@@ -68,12 +68,22 @@ output "github_webhook_url" {
   value       = "https://${local.ingest_domain}/github"
 }
 
-output "github_poller_user_name" {
-  description = "IAM user the Railway poller authenticates as. Create its access key out of band — Terraform deliberately does not, so no credential enters state."
-  value       = aws_iam_user.github_poller.name
+output "github_poller_function_name" {
+  description = "Name of the github-poller Lambda, for log tailing and manual invocation."
+  value       = aws_lambda_function.github_poller.function_name
+}
+
+output "github_notifications_pat_parameter" {
+  description = "SSM parameter the poller reads its classic Notifications PAT from. Set its value out of band."
+  value       = var.github_notifications_pat_parameter
+}
+
+output "github_events_pat_parameter" {
+  description = "SSM parameter the poller reads its Events API PAT from. Set its value out of band."
+  value       = var.github_events_pat_parameter
 }
 
 output "poller_state_key" {
-  description = "Object key in the operational-state bucket holding the poller's cursors. Set as STATE_KEY in the Railway service."
+  description = "Object key in the operational-state bucket holding the poller's cursors. Wired into the Lambda as STATE_KEY."
   value       = var.poller_state_key
 }

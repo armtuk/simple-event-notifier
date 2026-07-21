@@ -1,3 +1,4 @@
+import { EventBucketName, StateBucketName } from "@personal-events/event-sink"
 import { Either, ParseResult, Schema } from "effect"
 
 /**
@@ -28,7 +29,7 @@ export const ingestConfigDefaults = {
 } as const
 
 const IngestConfigSchema = /*#__PURE__*/ Schema.Struct({
-  eventBucketName: Schema.NonEmptyString,
+  eventBucketName: EventBucketName,
   /**
    * Operational state — delivery-dedupe markers now, poller cursors later — lives in a **separate
    * bucket** from the events. It is not tidiness: `apps/desktop-notifier/src/poller.ts` lists the
@@ -36,7 +37,7 @@ const IngestConfigSchema = /*#__PURE__*/ Schema.Struct({
    * and `"deliveries/…"` sorts above every `"2026-…"` event key. One marker in the event bucket
    * would push a consumer's mark past every event that will ever exist.
    */
-  stateBucketName: Schema.NonEmptyString,
+  stateBucketName: StateBucketName,
   githubWebhookSecretParam: Schema.NonEmptyString,
   githubDeliveryPrefix: Schema.NonEmptyString,
   region: Schema.NonEmptyString,

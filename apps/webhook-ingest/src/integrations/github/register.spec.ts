@@ -58,4 +58,34 @@ describe("registerGithub", () => {
     const [integration] = registerGithub(registration)(deps)
     expect(integration instanceof GithubWebhookIntegration && integration.deps.events).toBe(deps.events)
   })
+
+  /**
+   * The two-bucket rule, guarded **where the wiring decision is actually made**. The earlier version
+   * of this guard asserted `new DeliveryDedupeRepository(…, stateBucket, …).bucket === stateBucket`
+   * — that a constructor stores its argument — and would have passed unchanged if `register.ts`
+   * started passing the event bucket, which is the exact regression the whole edifice exists to
+   * prevent.
+   *
+   * Belt and braces: the branded `StateBucketName` makes it a compile error too, so this spec is the
+   * runtime half of a guard that now has both.
+   */
+  it("points dedupe markers at the STATE bucket and events at the EVENT bucket — never the same one", () => {
+    const { deps } = depsWith()
+    const [integration] = registerGithub(registration)(deps)
+    const wired = integration instanceof GithubWebhookIntegration ? integration : undefined
+    expect(wired?.deps.dedupe.bucket).toBe(stateBucket)
+    expect(wired?.deps.events.bucket).toBe(eventBucket)
+    expect(wired?.deps.dedupe.bucket).not.toBe(wired?.deps.events.bucket)
+  })
+
+  it("never addresses a marker under a key that could sort above an event key in the event bucket", () => {
+    const { deps } = depsWith()
+    const [integration] = registerGithub(registration)(deps)
+    const wired = integration instanceof GithubWebhookIntegration ? integration : undefined
+    const markerKey = wired?.deps.dedupe.keyFor("some-delivery-id") ?? ""
+    expect(markerKey.startsWith(githubRegistrationDefaults.deliveryPrefix)).toBe(true)
+    // The marker key sorts above a 2026-… event key, which is precisely why it must live elsewhere.
+    expect(markerKey > "2026-07-19T19:02:11.000Z").toBe(true)
+    expect(wired?.deps.dedupe.bucket).not.toBe(wired?.deps.events.bucket)
+  })
 })

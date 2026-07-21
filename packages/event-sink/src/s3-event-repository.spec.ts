@@ -1,10 +1,11 @@
 import { buildEventKey, type Event } from "@personal-events/event-model"
 import { readExemplarEvent } from "@personal-events/event-model/testing"
 import { describe, expect, it } from "vitest"
+import { asEventBucketName } from "./bucket-names.ts"
 import { S3EventRepository } from "./s3-event-repository.ts"
 import { awsError, createFakeS3 } from "./testing/fake-s3.ts"
 
-const bucket = "events.prod.personal-events.fifthdimensionengineering.com"
+const bucket = asEventBucketName("events.prod.personal-events.fifthdimensionengineering.com")
 const pullRequest = readExemplarEvent("valid-github-pull-request.json")
 const agentNotification = readExemplarEvent("valid-agent-notification.json")
 

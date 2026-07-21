@@ -161,3 +161,43 @@ variable "poller_state_key" {
     error_message = "poller_state_key must be a non-empty object key with no leading slash."
   }
 }
+
+variable "poller_lambda_dist_path" {
+  description = "Directory zipped into the github-poller Lambda deployment package. Must be built (pnpm --filter @personal-events/github-poller build) before plan or apply."
+  type        = string
+  default     = "../../apps/github-poller/dist"
+}
+
+variable "poller_schedule_expression" {
+  description = "EventBridge schedule for the poller. rate(1 minute) is the floor and the right cadence: GitHub's X-Poll-Interval asks for >=60s and the poller is only the webhook fallback."
+  type        = string
+  default     = "rate(1 minute)"
+}
+
+variable "github_username" {
+  description = "The GitHub login whose Events feed the poller reads (GET /users/{username}/received_events). Set per environment; empty is accepted for planning but the poller refuses to run the Events source without it."
+  type        = string
+  default     = ""
+}
+
+variable "github_notifications_pat_parameter" {
+  description = "SSM parameter holding the CLASSIC PAT for GET /notifications. Terraform creates a placeholder; set the value out of band so it never enters state."
+  type        = string
+  default     = "/personal-events/github/notifications-pat"
+
+  validation {
+    condition     = startswith(var.github_notifications_pat_parameter, "/")
+    error_message = "github_notifications_pat_parameter must be an absolute SSM parameter path beginning with /."
+  }
+}
+
+variable "github_events_pat_parameter" {
+  description = "SSM parameter holding the PAT (any type) for the Events API. Terraform creates a placeholder; set the value out of band so it never enters state."
+  type        = string
+  default     = "/personal-events/github/events-pat"
+
+  validation {
+    condition     = startswith(var.github_events_pat_parameter, "/")
+    error_message = "github_events_pat_parameter must be an absolute SSM parameter path beginning with /."
+  }
+}

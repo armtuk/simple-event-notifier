@@ -1,24 +1,24 @@
 import { Writable } from "node:stream"
 import type { S3Client } from "@aws-sdk/client-s3"
-import { S3EventRepository } from "@personal-events/event-sink"
+import { asEventBucketName, asStateBucketName, S3EventRepository } from "@personal-events/event-sink"
 import { loadGithubConfig } from "@personal-events/github"
 import { Either } from "effect"
 import { format, type Logger, transports } from "winston"
 import { createPollerLogger } from "../logger.ts"
-import type { PollerState } from "../poller-state.ts"
+import { emptyPollerState, type PollerState } from "../poller-state.ts"
 import { PollerStateRepository } from "../poller-state-repository.ts"
 
 /**
  * Fixtures for the poller. `fetch` and the S3 `send` boundary are the only fakes; every decision
- * under test — conditional headers, status handling, dedupe, cursor advancement, back-off — runs the
+ * under test — conditional headers, status handling, dedupe, cursor advancement, notBefore — runs the
  * real code. `.agents/tests.md` prefers real APIs, and the deploy-gated rows in the story cover that
  * half; what a unit spec can settle is behaviour against *specific* responses, including the
  * rate-limit and malformed cases a live API will not produce on demand.
  */
 
-export const eventBucket = "events.prod.personal-events.fifthdimensionengineering.com"
+export const eventBucket = asEventBucketName("events.prod.personal-events.fifthdimensionengineering.com")
 
-export const stateBucket = "state.prod.personal-events.fifthdimensionengineering.com"
+export const stateBucket = asStateBucketName("state.prod.personal-events.fifthdimensionengineering.com")
 
 export const stateKey = "state/github-poller.json"
 
@@ -114,14 +114,24 @@ export const noSuchKey = (): Error => Object.assign(new Error("no such key"), { 
 
 export const eventRepositoryOver = (s3: FakeS3): S3EventRepository => new S3EventRepository(s3.client, eventBucket)
 
-export const stateRepositoryOver = (s3: FakeS3, logger: Logger): PollerStateRepository =>
-  new PollerStateRepository(s3.client, stateBucket, stateKey, logger)
+export const stateRepositoryOver = (s3: FakeS3, logger: Logger, key: string = stateKey): PollerStateRepository =>
+  new PollerStateRepository(s3.client, stateBucket, key, logger)
 
 export const commandsNamed = (commands: readonly RecordedCommand[], name: string): RecordedCommand[] =>
   commands.filter(command => command.name === name)
 
 export const eventPuts = (s3: FakeS3): RecordedCommand[] =>
   commandsNamed(s3.commands, "PutObjectCommand").filter(command => command.input.Bucket === eventBucket)
+
+/**
+ * The **distinct object keys** that survive in the fake bucket, as opposed to the number of writes
+ * attempted. The two differ exactly when two events collapse onto one key and the second silently
+ * overwrites the first — a loss that counting `PutObjectCommand`s cannot see, because both puts
+ * genuinely happen and both genuinely succeed.
+ */
+export const storedEventKeys = (s3: FakeS3): readonly string[] => [...s3.stored.keys()].filter(key => key !== stateKey)
+
+export { emptyPollerState }
 
 /** A `fetch` stand-in returning scripted responses in order, recording what was asked for. */
 export interface FakeFetch {
@@ -158,4 +168,31 @@ export const withFetch = async <T>(fake: FakeFetch, body: () => Promise<T>): Pro
   return body().finally(() => {
     globalThis.fetch = original
   })
+}
+
+/** An in-memory SSM: maps parameter names to values, or rejects a named parameter to exercise a read failure. */
+export interface FakeSsm {
+  readonly client: import("@aws-sdk/client-ssm").SSMClient
+  readonly reads: string[]
+}
+
+export interface FakeSsmOptions {
+  readonly values?: Readonly<Record<string, string>>
+  readonly failParams?: readonly string[]
+}
+
+export const fakeSsm = (options: FakeSsmOptions = {}): FakeSsm => {
+  const reads: string[] = []
+  const client = {
+    send: async (command: { input: { Name?: string } }): Promise<unknown> => {
+      const name = command.input.Name ?? ""
+      reads.push(name)
+      if ((options.failParams ?? []).includes(name)) {
+        return Promise.reject(Object.assign(new Error("access denied"), { name: "AccessDeniedException" }))
+      }
+      const value = options.values?.[name]
+      return value === undefined ? { Parameter: undefined } : { Parameter: { Value: value } }
+    }
+  }
+  return { client: client as unknown as import("@aws-sdk/client-ssm").SSMClient, reads }
 }

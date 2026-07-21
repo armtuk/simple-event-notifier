@@ -1,3 +1,9 @@
+export {
+  asEventBucketName,
+  asStateBucketName,
+  EventBucketName,
+  StateBucketName
+} from "./bucket-names.ts"
 export { type EventObject, toEventObjects } from "./encode-events.ts"
 export {
   type BucketProbeInconclusive,

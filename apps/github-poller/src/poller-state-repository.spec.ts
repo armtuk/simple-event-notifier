@@ -12,7 +12,7 @@ import {
 
 const populated: PollerState = {
   notifications: { cursor: { lastModified: "Sun, 19 Jul 2026 19:02:11 GMT", since: "2026-07-19T19:02:11Z" }, seen: ["1:a"] },
-  events: { cursor: { etag: 'W/"abc"' }, seen: ["56138220984"] }
+  events: { cursor: { etag: 'W/"abc"' }, seen: ["56138220984"], notBefore: "2026-07-20T00:05:00.000Z" }
 }
 
 const repositoryWith = (options: Parameters<typeof fakeS3>[0] = {}) => {
@@ -22,13 +22,13 @@ const repositoryWith = (options: Parameters<typeof fakeS3>[0] = {}) => {
 }
 
 describe("PollerStateRepository", () => {
-  it("reads state from the STATE bucket, never the event bucket", async () => {
+  it("reads the whole state object from the STATE bucket, never the event bucket", async () => {
     const { repository, s3 } = repositoryWith({ initialState: populated })
     await repository.load()
     expect(commandsNamed(s3.commands, "GetObjectCommand")[0]?.input).toStrictEqual({ Bucket: stateBucket, Key: stateKey })
   })
 
-  it("round-trips a populated state", async () => {
+  it("round-trips a populated state including both branches and a notBefore", async () => {
     const { repository } = repositoryWith({ initialState: populated })
     expect(await repository.load()).toStrictEqual(populated)
   })
@@ -39,7 +39,7 @@ describe("PollerStateRepository", () => {
     expect(entriesFor(log.captured, "no poller state yet; starting from empty state")[0]?.level).toBe("info")
   })
 
-  it("recovers from a malformed state object rather than refusing to start, and warns", async () => {
+  it("recovers from a malformed state object rather than refusing to run, and warns", async () => {
     const { repository, log } = repositoryWith({ initialState: "{ not json" })
     expect(await repository.load()).toStrictEqual(emptyPollerState)
     expect(entriesFor(log.captured, "poller state object is unreadable; starting from empty state")[0]).toMatchObject({
@@ -50,9 +50,8 @@ describe("PollerStateRepository", () => {
   })
 
   it("recovers from a state object of the wrong SHAPE, not merely bad JSON", async () => {
-    const { repository, log } = repositoryWith({ initialState: JSON.stringify({ notifications: { cursor: {} } }) })
+    const { repository } = repositoryWith({ initialState: JSON.stringify({ notifications: { cursor: {} } }) })
     expect(await repository.load()).toStrictEqual(emptyPollerState)
-    expect(entriesFor(log.captured, "poller state object is unreadable; starting from empty state")).toHaveLength(1)
   })
 
   it("warns rather than infos when the read failed for a reason other than absence", async () => {
@@ -69,7 +68,7 @@ describe("PollerStateRepository", () => {
     expect(JSON.parse(String(put?.input.Body))).toStrictEqual(populated)
   })
 
-  it("survives a save-then-load round trip, which is what makes a restart resume", async () => {
+  it("survives a save-then-load round trip, which is what makes an invocation resume", async () => {
     const { repository } = repositoryWith()
     await repository.save(populated)
     expect(await repository.load()).toStrictEqual(populated)

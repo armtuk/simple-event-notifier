@@ -1,5 +1,5 @@
 import { sign } from "@octokit/webhooks-methods"
-import { S3EventRepository } from "@personal-events/event-sink"
+import { asEventBucketName, asStateBucketName, S3EventRepository } from "@personal-events/event-sink"
 import { loadGithubConfig } from "@personal-events/github"
 import { readGithubExemplar } from "@personal-events/github/testing"
 import { Either } from "effect"
@@ -20,9 +20,9 @@ import { WebhookSecretRepository } from "../webhook-secret-repository.ts"
 
 export const testSecret = "a-shared-webhook-secret"
 
-export const stateBucket = "state.prod.personal-events.fifthdimensionengineering.com"
+export const stateBucket = asStateBucketName("state.prod.personal-events.fifthdimensionengineering.com")
 
-export const eventBucket = "events.prod.personal-events.fifthdimensionengineering.com"
+export const eventBucket = asEventBucketName("events.prod.personal-events.fifthdimensionengineering.com")
 
 export const deliveryPrefix = "deliveries/github"
 

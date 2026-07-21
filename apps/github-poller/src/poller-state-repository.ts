@@ -1,33 +1,34 @@
 import { GetObjectCommand, PutObjectCommand, type S3Client } from "@aws-sdk/client-s3"
 import { describeCause } from "@personal-events/event-model"
+import type { StateBucketName } from "@personal-events/event-sink"
 import { Either } from "effect"
 import type { Logger } from "winston"
 import { decodePollerState, emptyPollerState, type PollerState } from "./poller-state.ts"
 
 /**
- * Where the poller's cursors live: an S3 object, in the **operational-state bucket**.
+ * Where the poller's whole state lives: one S3 object, in the **operational-state bucket**.
  *
- * Two decisions worth their reasons.
- *
- * **S3 rather than a Railway volume.** A volume causes downtime on every redeploy and does not
- * survive the service moving; S3 is already the system's source of record, survives anything, and
- * needs no additional infrastructure.
+ * The invocation reads it once at the start and writes it once at the end (see `poll-once.ts`), which
+ * — with the Lambda's `reserved_concurrent_executions = 1` — is what makes a single combined object
+ * safe. See `poller-state.ts` for the concurrency argument in full.
  *
  * **The state bucket, never the event bucket.** `apps/desktop-notifier/src/poller.ts` lists the
  * event bucket with `StartAfter` and no prefix filter, and advances its mark to the highest key it
  * saw. `"state/…"` sorts above every `"2026-…"` event key, so a state object in the event bucket
- * would push that consumer's mark past every event that will ever exist. The story plan originally
- * put it there; `infra/personal-events/state-bucket.tf` is the fix.
+ * would push that consumer's mark past every event that will ever exist — a silent, permanent
+ * outage. The branded `StateBucketName` makes passing the wrong bucket a compile error.
  *
- * Loading never fails the process. A missing object is first-run, and a malformed one is logged and
- * treated as first-run — the cost is re-delivering a page of recent items, against the alternative
- * of a service that will not start until someone hand-edits an S3 object.
+ * Loading never fails the invocation. A missing object is first-run; a malformed one is logged and
+ * treated as first-run — the cost is re-delivering a page of recent items (which the dedupe set then
+ * suppresses next time), against the alternative of a poller that will not run until someone
+ * hand-edits an S3 object.
  */
 
 export class PollerStateRepository {
   constructor(
     public client: S3Client,
-    public bucket: string,
+    /** Branded, so the event bucket cannot be passed here — see `@personal-events/event-sink`. */
+    public bucket: StateBucketName,
     public key: string,
     public logger: Logger
   ) {}

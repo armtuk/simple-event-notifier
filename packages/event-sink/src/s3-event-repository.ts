@@ -1,6 +1,7 @@
 import { PutObjectCommand, type S3Client } from "@aws-sdk/client-s3"
 import { describeCause, type Event } from "@personal-events/event-model"
 import { Either } from "effect"
+import type { EventBucketName } from "./bucket-names.ts"
 import { type EventObject, toEventObjects } from "./encode-events.ts"
 
 /**
@@ -22,7 +23,7 @@ export interface PutEventsSuccess {
 
 export interface PutEventsFailure {
   readonly _tag: "PutEventsFailure"
-  readonly bucket: string
+  readonly bucket: EventBucketName
   readonly keys: readonly string[]
   readonly message: string
 }
@@ -34,7 +35,8 @@ export const eventContentType = "application/json"
 export class S3EventRepository {
   constructor(
     public client: S3Client,
-    public bucket: string
+    /** Branded, so a state-bucket name cannot be passed here by mistake — see `bucket-names.ts`. */
+    public bucket: EventBucketName
   ) {}
 
   putEvents = async (events: readonly Event[]): Promise<PutEventsResult> => {
