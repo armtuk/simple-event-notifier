@@ -32,11 +32,21 @@ export type PutEventsResult = PutEventsSuccess | PutEventsFailure
 
 export const eventContentType = "application/json"
 
+/** `.agents/guidance/api-integrations.md`: the default downstream parallelism is 10. */
+export const defaultPutConcurrency = 10
+
 export class S3EventRepository {
   constructor(
     public client: S3Client,
     /** Branded, so a state-bucket name cannot be passed here by mistake — see `bucket-names.ts`. */
-    public bucket: EventBucketName
+    public bucket: EventBucketName,
+    /**
+     * Max simultaneous `PutObject`s in a batch, per `.agents/guidance/api-integrations.md`'s default
+     * parallelism of 10. The webhook path always writes one; the poller writes a whole page (up to
+     * 50), so after a cold start or a long back-off an unbounded fan-out would open that many
+     * connections at once. A caller may raise or lower it from config.
+     */
+    public putConcurrency: number = defaultPutConcurrency
   ) {}
 
   putEvents = async (events: readonly Event[]): Promise<PutEventsResult> => {
@@ -52,14 +62,20 @@ export class S3EventRepository {
   }
 
   /**
-   * Concurrent rather than sequential: the events in one batch are independent, and the object key
-   * — not write order — is what establishes their order in the log. `Promise.all` also means one
-   * rejection fails the whole batch, which is the behaviour a caller wants: a partial write with a
-   * success result would let a poller advance its cursor past events that never landed.
+   * The batch is written in **bounded-concurrency chunks**, not one unbounded `Promise.all`. Within
+   * a chunk the writes are concurrent (order is irrelevant — the object key, not write order,
+   * establishes an event's place in the log); the chunks run in sequence, threaded through `reduce`
+   * per `.agents/code-examples/typescript/src/looping.ts`. All-or-nothing is preserved: the first
+   * rejecting chunk fails the whole batch, so a caller can never advance a cursor past an event that
+   * did not land.
    */
   putObjects = async (objects: readonly EventObject[]): Promise<PutEventsResult> => {
     const keys = objects.map(object => object.key)
-    return Promise.all(objects.map(object => this.putObject(object)))
+    return chunk(objects, this.putConcurrency)
+      .reduce(
+        async (chain, group) => chain.then(async () => Promise.all(group.map(object => this.putObject(object))).then(() => undefined)),
+        Promise.resolve()
+      )
       .then((): PutEventsResult => ({ _tag: "PutEventsSuccess", count: objects.length, keys }))
       .catch((cause: unknown): PutEventsResult => ({ _tag: "PutEventsFailure", bucket: this.bucket, keys, message: describeCause(cause) }))
   }
@@ -67,3 +83,11 @@ export class S3EventRepository {
   putObject = async ({ key, body }: EventObject): Promise<unknown> =>
     this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: body, ContentType: eventContentType }))
 }
+
+/** Splits a batch into groups of at most `size`, so writes fan out bounded rather than all-at-once. */
+const chunk = <T>(items: readonly T[], size: number): readonly T[][] =>
+  items.length === 0
+    ? []
+    : Array.from({ length: Math.ceil(items.length / Math.max(1, size)) }, (_unused, index) =>
+        items.slice(index * size, index * size + size)
+      )

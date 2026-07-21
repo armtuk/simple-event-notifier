@@ -60,12 +60,15 @@ resource "aws_cloudwatch_log_group" "ingest_access" {
   retention_in_days = var.lambda_log_retention_days
 }
 
-# Scoped to this API rather than to `*`: without a source_arn any API in any account could invoke
-# the function.
+# Scoped to this API in this account (`.../*/*`: any stage, any route), rather than to `*`. The
+# path component must be a wildcard, NOT the literal `{integration}` route template: API Gateway
+# presents the *resolved* path (`github`) in the AWS:SourceArn it hands Lambda, so a literal
+# `{integration}` would match only a request whose path was itself that string — every real delivery
+# would get a 403 from the resource policy before our code ran (R1-8).
 resource "aws_lambda_permission" "ingest" {
   statement_id  = "AllowExecutionFromApiGateway"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.webhook_ingest.function_name
   principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_apigatewayv2_api.ingest.execution_arn}/*/*/{integration}"
+  source_arn    = "${aws_apigatewayv2_api.ingest.execution_arn}/*/*"
 }

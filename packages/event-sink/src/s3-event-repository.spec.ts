@@ -57,3 +57,39 @@ describe("S3EventRepository.putEvents", () => {
     expect(s3.puts).toStrictEqual([])
   })
 })
+
+describe("S3EventRepository.putEvents — bounded concurrency (R1-13)", () => {
+  const events = [pullRequest, agentNotification, pullRequest, agentNotification, pullRequest]
+
+  const trackingClient = (): { client: import("@aws-sdk/client-s3").S3Client; peak: () => number } => {
+    let inFlight = 0
+    let peak = 0
+    const client = {
+      send: async (): Promise<unknown> => {
+        inFlight += 1
+        peak = Math.max(peak, inFlight)
+        await new Promise(resolve => setTimeout(resolve, 5))
+        inFlight -= 1
+        return {}
+      }
+    }
+    return { client: client as unknown as import("@aws-sdk/client-s3").S3Client, peak: () => peak }
+  }
+
+  it("never exceeds the configured concurrency, even for a page-sized batch", async () => {
+    const tracking = trackingClient()
+    const result = await new S3EventRepository(tracking.client, bucket, 2).putEvents(events)
+    expect(result._tag).toBe("PutEventsSuccess")
+    expect(tracking.peak()).toBeLessThanOrEqual(2)
+  })
+
+  it("defaults to a parallelism of 10 when none is given", async () => {
+    expect(new S3EventRepository(createFakeS3().client, bucket).putConcurrency).toBe(10)
+  })
+
+  it("still fails the whole batch, all-or-nothing, when a write in a later chunk rejects", async () => {
+    const s3 = createFakeS3({ failOnPut: 3 })
+    const result = await new S3EventRepository(s3.client, bucket, 2).putEvents(events)
+    expect(result._tag).toBe("PutEventsFailure")
+  })
+})

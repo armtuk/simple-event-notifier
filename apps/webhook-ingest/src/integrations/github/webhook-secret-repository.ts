@@ -10,9 +10,12 @@ import { describeCause } from "@personal-events/event-model"
  * share a single in-flight read rather than racing to issue their own.
  *
  * A failed read is **not** cached. Caching it would turn one transient SSM blip into a function that
- * rejects every delivery until AWS happens to recycle the environment — and because a rejected
- * delivery is a 401 that GitHub does not retry, that is silent, permanent event loss rather than a
- * visible outage.
+ * answers **500** to every delivery until AWS happens to recycle the warm environment — a
+ * `secrets.get()` rejection propagates out of `handle` and the handler maps it to a server error.
+ * A 500 is visible in GitHub's delivery log and hand-redeliverable (within the three-day window),
+ * with the poller as the backstop — but making a whole warm environment reject deliveries over one
+ * transient blip is still the wrong trade, so the memo is cleared on failure and the next delivery
+ * retries the read.
  */
 
 export class WebhookSecretRepository {

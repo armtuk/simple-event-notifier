@@ -13,6 +13,6 @@ export {
   OutputSchema
 } from "./mapping-config.ts"
 export { type NormalizedEvent, NormalizedEventSchema } from "./normalized-event.ts"
+export type { Normalizer } from "./normalizer.ts"
 export type { SecondaryProcessor } from "./secondary-processor.ts"
-export type { SourceAdapter } from "./source-adapter.ts"
 export { transform } from "./transform.ts"

@@ -36,12 +36,18 @@ export const matchKeyChannelSeparator = ":"
  * spellings of the same trigger must not miss each other. Absent fields are simply absent: a rule
  * that omits `action` and a trigger that omits `action` produce the same key, which is what lets
  * an action-less event (`push`) match a rule written without one.
+ *
+ * Keys and values are `encodeURIComponent`-escaped before joining, so a value containing the `&`
+ * or `=` separators cannot forge a different rule's key. GitHub's values are already free of those,
+ * so no existing key changes; the escaping matters for the next provider (Claude Code), whose
+ * trigger fields may carry URL-ish or free text. The result stays human-readable for the logged
+ * `matchKey` in `TransformError` and the unmapped-event warning.
  */
 export const matchKey = (trigger: Trigger): string => {
   const { channel, ...match } = trigger
   const fields = Object.entries(match)
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, value]) => `${key}=${value}`)
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
     .join(matchKeyFieldSeparator)
-  return `${channel}${matchKeyChannelSeparator}${fields}`
+  return `${encodeURIComponent(channel)}${matchKeyChannelSeparator}${fields}`
 }

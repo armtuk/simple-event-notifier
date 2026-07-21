@@ -56,4 +56,18 @@ describe("matchKey", () => {
   it("keeps a channel with no fields distinguishable", () => {
     expect(matchKey({ channel: "notification" })).toBe("notification:")
   })
+
+  it("escapes reserved characters so a field value cannot forge another rule's key (R1-10)", () => {
+    // Without escaping, `action="opened&event=issues"` and the two-field trigger below both render
+    // `webhook:action=opened&event=issues`, letting one trigger be classified by another's rule.
+    expect(matchKey({ channel: "webhook", action: "opened&event=issues" })).not.toBe(
+      matchKey({ channel: "webhook", action: "opened", event: "issues" })
+    )
+  })
+
+  it("leaves GitHub's reserved-character-free values byte-for-byte unchanged", () => {
+    expect(matchKey({ channel: "webhook", event: "pull_request", action: "review_requested" })).toBe(
+      "webhook:action=review_requested&event=pull_request"
+    )
+  })
 })
