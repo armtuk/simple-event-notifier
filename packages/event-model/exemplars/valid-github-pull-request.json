@@ -5,6 +5,8 @@
   "priority": 5,
   "source": "github",
   "name": "new-pull-request",
+  "producer": "github-webhook",
+  "eventId": "5b1c8e40-84a1-11f1-9a3c",
   "acknowledged": false,
   "handled": false,
   "workItem": "https://www.jira.com/browse/AWE-150",
@@ -14,8 +16,12 @@
     "pull_request": {
       "html_url": "https://github.com/plexq/aws-work-eventer/pull/412",
       "title": "Add the delegated Route53 zone",
-      "user": { "login": "alexturner" }
+      "user": {
+        "login": "alexturner"
+      }
     },
-    "repository": { "full_name": "plexq/aws-work-eventer" }
+    "repository": {
+      "full_name": "plexq/aws-work-eventer"
+    }
   }
 }

@@ -136,3 +136,123 @@ coordinator) and on delivery semantics; then the deferred `terraform apply` veri
 AWS resource, no NS record in the live zone.
 
 **Left off at:** validation green uncached; tree clean on `feat/bootstrap-and-iac`.
+
+---
+
+## 2026-07-19 — START — `github-integration` feature execution
+
+**Prompt (summarised):** execute the five `github-integration` stories in dependency order —
+AWE-153 `integration-core`, AWE-154 `packages/github`, AWE-155 the generic webhook ingest,
+AWE-156 the GitHub webhook handler, AWE-157 the Railway poller — in the
+`aws-work-eventer-wt-github-integration` worktree on `github-integration`. Refresh each plan against
+the real repo before executing it (they were planned against an **empty** one). Code and dry-run
+only: no `terraform apply`, no AWS resource, no webhook registered against a real repository, no
+live GitHub API call with a real PAT, no Railway deployment, no push. Do **not** fix the known
+producer-timestamp ordering hazard — record any new instance of it for the user instead.
+
+**Understood as:** build the reusable template first and get its shape right, since Claude Code is
+the next integration to plug into it; treat every story plan as a proposal to be checked against the
+code rather than a specification to be typed in; and be explicit and honest about the large fraction
+of this feature that the side-effect fence leaves untested.
+
+## 2026-07-19 — END — `github-integration` feature execution
+
+**Actions completed**
+
+- **AWE-153 → Completed.** `@personal-events/integration-core`: the mapping-config schema, the
+  `channel`-discriminated trigger and its canonical `matchKey`, compile-then-lookup classification,
+  the pure `transform`, and interfaces-only `SourceAdapter`/`SecondaryProcessor`. ADR
+  `2026-07-19-2130-integration-template-and-dual-path` covers the whole feature.
+- **AWE-154 → Implementation Adjustment.** `@personal-events/github`: subset payload schemas, the
+  non-confusable trigger union (now actually *enforced* against the config), the mapping JSON, and
+  pure normalizers for the webhook and notification channels.
+- **AWE-155 → Implementation Adjustment.** `@personal-events/event-sink` (the single S3 write path)
+  plus `apps/webhook-ingest` and its Terraform: HTTP API, Lambda, ACM certificate, `hooks.` record.
+- **AWE-156 → Implementation Adjustment.** The GitHub webhook edge: HMAC over the raw body, S3
+  delivery-marker dedupe, SSM SecureString secret, and the operator setup runbook.
+- **AWE-157 → Implementation Adjustment.** `apps/github-poller`: dual-source conditional polling,
+  bounded per-source dedupe, S3-persisted cursors, per-source isolation, Dockerfile + Railway config.
+
+**Three defects found and fixed that the plans would have introduced**
+
+1. **Operational state in the event bucket (AWE-156 and AWE-157).** `deliveries/…` and `state/…`
+   both sort above every `2026-…` event key, and `apps/desktop-notifier/src/poller.ts` lists the
+   bucket with no prefix filter and advances its mark to the highest key seen — so one marker would
+   have stranded the notifier past every event that will ever exist, silently and permanently. Fixed
+   with a separate operational-state bucket; the rule is now in `CLAUDE.md`.
+2. **The poller exited after one cycle per source.** Its scheduler used `setTimeout(...).unref()`,
+   and between polls that timer is the only handle a healthy poller holds. Found by running the built
+   binary; no unit spec could have caught it, because every spec injects its own scheduler.
+3. **Notification triggers over-specified (AWE-154).** Including `subject.type` meant every
+   notification rule silently fell through to the config default. Caught by the specs.
+
+**@test-removed** — none. No spec was deleted or skipped in this feature.
+
+**Open questions / blockers:** none blocking. The delivery-semantics question is now **three-way**:
+`bootstrap-and-iac`'s #12 and R2-1, plus this feature's notifications timestamp collapse
+(`updated_at` is second-precision, so same-instant siblings are the *norm* for that producer, not a
+coincidence). One ruling — at-most-once vs retry-until-delivered vs quarantine-and-continue, and how
+wide a lookback — closes all three. Recorded in `feature.md` § Follow-up candidates, in the ADR, and
+in `packages/github/src/instant.ts`; deliberately **not** fixed.
+
+**Next steps:** independent code review, then the deferred verifications — they are the only route to
+`Completed` for AWE-154 through AWE-157, and they need the user's AWS account, a webhook secret, a
+classic PAT, and a Railway project.
+
+**Context summary:** `.agents/cache/effect/**` still does not exist, so every Effect call was
+verified against `node_modules/effect` typings. Five new workspace members joined the turbo
+graph (`integration-core`, `github`, `event-sink`, `webhook-ingest`, `github-poller`); `turbo.json`'s `plan`/`deploy` tasks gained `dependsOn: ["^build"]` because
+`archive_file` reads the Lambda bundle at **plan** time, not only apply.
+
+**Left off at:** five commits on `github-integration`; `pnpm build/lint/test/typecheck --force` green
+uncached with 602 specs (Level 0's 182 among them, unchanged); `terraform fmt -check` clean,
+`validate` Success on both roots, and a real scratch `plan` of `34 to add, 0 to change, 0 to destroy`.
+Nothing applied, nothing deployed, nothing pushed.
+
+---
+
+## 2026-07-21 — START — `github-integration` R1 fix round + AWS-only re-arch + contract change
+
+**Prompt (summarised):** apply the R1 review (2 blockers, 7 majors, 5 minors, 1 nit), reconciled with
+three user decisions delivered mid-round: (1) drop Railway — the poller becomes an
+EventBridge-scheduled Lambda; (2) an approved **event-model contract change** adding `producer` +
+`eventId` to the key, which *properly fixes* the R1-2 collision; (3) the environment vocabulary
+becomes `development` / `production` only; (4) the desktop notifier polls every 10s. Record — do not
+build — the delivery-semantics lookback window (now a *decided* consumer-side follow-up). Same fence.
+
+**Understood as:** four logical commits — poller re-arch, env rename, contract change, folded R1
+fixes + records — each verified, with the WIP from the interrupted first R1 pass reconciled (keep the
+still-valid fixes, redo the Railway-specific parts).
+
+## 2026-07-21 — END — same
+
+**Actions completed (five commits on `github-integration`):**
+
+- **Poller re-arch (Railway → scheduled Lambda).** Deleted the Dockerfile, `railway.json`, the
+  self-scheduling daemon loop and its backoff. The handler is one poll cycle; EventBridge is the
+  cadence; state is one S3 object read-once/written-once; PATs in SSM; `reserved_concurrent_executions
+  = 1`. Terraform `github-poller.tf` (Lambda + EventBridge + 2 SSM params + IAM role) replaces the IAM
+  user. **Moots R1-1/4/7/14.** Also folded R1-5 (branded `EventBucketName`/`StateBucketName`).
+- **Env vocabulary → development / production** across all apps, both Terraform roots, specs and docs;
+  the CLAUDE.md carve-out deleted. Desktop notifier poll interval 30s → 10s.
+- **Event-model contract: `producer` + `eventId`.** Key is now
+  `…{name}.{producer}.{eventId}.json`. Properly fixes R1-2 (overwrite collision) and makes redelivery
+  idempotent. Rippled through integration-core, github (both normalizers), event-sink, webhook-ingest,
+  the poller, and Level 0's event-model/desktop-notifier — all green.
+- **Remaining R1 fixes:** R1-8 (API GW `source_arn` wildcard), R1-9 (`SourceAdapter` → `Normalizer`),
+  R1-10 (matchKey escaping), R1-11 (secret 401→500 docs), R1-13 (bounded put concurrency), plus the
+  webhook R1-1 createRequire/bundle spec. ADR, feature.md, the two story plans, and the review file's
+  R1 disposition table updated.
+
+**Open questions / blockers:** none. The delivery-semantics question is now **decided** —
+retry-with-lookback (`StartAfter = max(mark − lookbackWindow, seed)` + a delivered-key set), a
+consumer-side change deferred to its own story, closing this feature's ordering skip and
+`bootstrap-and-iac` #12 / R2-1 together.
+
+**@test-removed** — none.
+
+**Left off at:** five commits; `pnpm build/lint/test/typecheck --force` green uncached (615 specs;
+Level 0's specs among them, unchanged); `terraform fmt -check` + `validate` clean on both roots;
+scratch `plan` `41 to add, 0 to change, 0 to destroy`. Nothing applied, deployed, or pushed. Every
+deploy-gated criterion — now Lambda/EventBridge/SSM-shaped — is enumerated per story under
+`## Deferred verification`.

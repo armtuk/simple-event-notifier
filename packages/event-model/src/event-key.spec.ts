@@ -10,26 +10,32 @@ const githubComponents: EventKeyComponents = {
   eventType: "alert",
   priority: 5,
   source: "github",
-  name: "new-pull-request"
+  name: "new-pull-request",
+  producer: "github-webhook",
+  eventId: "5b1c8e40"
 }
 
-const githubKey = "2026-06-28T18:44:30.123Z.alert.p5.github.new-pull-request.json"
+const githubKey = "2026-06-28T18:44:30.123Z.alert.p5.github.new-pull-request.github-webhook.5b1c8e40.json"
+
+const notificationKey = "2026-07-19T09:15:02.000Z.notification.p8.claude-code.prompt-complete.claude-code-host.4f2c9a1b.json"
 
 const malformedKeys = [
-  { key: "2026-06-28T18:44:30.123Z.alert.p5.github.json", why: "a missing name segment" },
-  { key: "2026-06-28T18:44:30.123Z.alert.p5.github.new.pull.request.json", why: "a dotted name segment" },
-  { key: "2026-06-28T18:44:30.123Z.alert.5.github.new-pull-request.json", why: "a priority without its p prefix" },
-  { key: "2026-06-28T18:44:30.123Z.warning.p5.github.new-pull-request.json", why: "an unknown event type" },
-  { key: "28-06-2026.alert.p5.github.new-pull-request.json", why: "a non-ISO timestamp" },
-  { key: "2026-07-19T09:15:02Z.alert.p5.github.new-pull-request.json", why: "a timestamp with no millisecond fraction" },
-  { key: "2026-07-19T09:15:02.12Z.alert.p5.github.new-pull-request.json", why: "a two-digit millisecond fraction" },
-  { key: "2026-06-28T18:44:30.123Z.alert.p05.github.new-pull-request.json", why: "a zero-padded priority" },
-  { key: "2026-06-28T18:44:30.123Z.alert.p5.github.new-pull-request.txt", why: "the wrong suffix" },
+  { key: "2026-06-28T18:44:30.123Z.alert.p5.github.new-pull-request.github-webhook.json", why: "a missing eventId segment" },
+  { key: "2026-06-28T18:44:30.123Z.alert.p5.github.new-pull-request.github-webhook.5b1c8e40.extra.json", why: "an extra segment" },
+  { key: "2026-06-28T18:44:30.123Z.alert.5.github.new-pull-request.github-webhook.5b1c8e40.json", why: "a priority without its p prefix" },
+  { key: "28-06-2026.alert.p5.github.new-pull-request.github-webhook.5b1c8e40.json", why: "a non-ISO timestamp" },
+  {
+    key: "2026-07-19T09:15:02Z.alert.p5.github.new-pull-request.github-webhook.5b1c8e40.json",
+    why: "a timestamp with no millisecond fraction"
+  },
+  { key: "2026-07-19T09:15:02.12Z.alert.p5.github.new-pull-request.github-webhook.5b1c8e40.json", why: "a two-digit millisecond fraction" },
+  { key: "2026-06-28T18:44:30.123Z.alert.p05.github.new-pull-request.github-webhook.5b1c8e40.json", why: "a zero-padded priority" },
+  { key: "2026-06-28T18:44:30.123Z.alert.p5.github.new-pull-request.github-webhook.5b1c8e40.txt", why: "the wrong suffix" },
   { key: "", why: "an empty key" }
 ]
 
 describe("buildKey", () => {
-  it("renders the README's canonical key layout", () => {
+  it("renders the README's canonical key layout, producer and eventId last", () => {
     expect(buildKey(githubComponents)).toBe(githubKey)
   })
 
@@ -41,17 +47,23 @@ describe("buildKey", () => {
     const earlier = buildKey({ ...githubComponents, timestamp: "2026-06-28T18:44:30.122Z" })
     expect([githubKey, earlier].sort()).toStrictEqual([earlier, githubKey])
   })
+
+  it("gives two events that agree on every other segment DISTINCT keys via eventId", () => {
+    expect(buildKey({ ...githubComponents, eventId: "aaaa" })).not.toBe(buildKey({ ...githubComponents, eventId: "bbbb" }))
+  })
 })
 
 describe("parseKey", () => {
-  it("recovers every component of a canonical key", () => {
+  it("recovers every component of a canonical key, including producer and eventId", () => {
     expect(Either.getOrThrow(parseKey(githubKey))).toStrictEqual(githubComponents)
   })
 
-  it("recovers a notification key with a different source and priority", () => {
-    const components = Either.getOrThrow(parseKey("2026-07-19T09:15:02.000Z.notification.p8.claude-code.prompt-complete.json"))
+  it("recovers a notification key with a different source, priority and producer", () => {
+    const components = Either.getOrThrow(parseKey(notificationKey))
     expect(components.timestamp).toBe("2026-07-19T09:15:02.000Z")
     expect(components.priority).toBe(8)
+    expect(components.producer).toBe("claude-code-host")
+    expect(components.eventId).toBe("4f2c9a1b")
   })
 
   it.each(malformedKeys)("rejects a key with $why", ({ key }) => {
@@ -63,17 +75,21 @@ describe("parseKey", () => {
   })
 
   it("rejects an out-of-range priority even though the key is structurally well formed", () => {
-    const error = Either.getOrThrow(Either.flip(parseKey("2026-06-28T18:44:30.123Z.alert.p9.github.new-pull-request.json")))
+    const error = Either.getOrThrow(
+      Either.flip(parseKey("2026-06-28T18:44:30.123Z.alert.p9.github.new-pull-request.github-webhook.id.json"))
+    )
     expect(error.message).toContain("priority")
   })
 
   it("names eventType when the type segment is well shaped but not a known value", () => {
-    const error = Either.getOrThrow(Either.flip(parseKey("2026-06-28T18:44:30.123Z.warning.p5.github.new-pull-request.json")))
+    const error = Either.getOrThrow(
+      Either.flip(parseKey("2026-06-28T18:44:30.123Z.warning.p5.github.new-pull-request.github-webhook.id.json"))
+    )
     expect(error.message).toContain("eventType")
   })
 
   it("keeps decoding injective: a zero-padded priority is rejected rather than aliased onto p5", () => {
-    expect(Either.isLeft(parseKey("2026-06-28T18:44:30.123Z.alert.p05.github.new-pull-request.json"))).toBe(true)
+    expect(Either.isLeft(parseKey("2026-06-28T18:44:30.123Z.alert.p05.github.new-pull-request.github-webhook.id.json"))).toBe(true)
   })
 })
 
@@ -89,11 +105,7 @@ describe("round trip", () => {
   })
 
   it("is injective: every key it accepts re-encodes to itself, so one key means one event", () => {
-    const keys = [
-      githubKey,
-      "2026-07-19T09:15:02.000Z.notification.p8.claude-code.prompt-complete.json",
-      "2026-01-01T00:00:00.000Z.alert.p1.github.push.json"
-    ]
+    const keys = [githubKey, notificationKey, "2026-01-01T00:00:00.000Z.alert.p1.github.push.github-poller.98765.json"]
     expect(keys.map(key => buildKey(Either.getOrThrow(parseKey(key))))).toStrictEqual(keys)
   })
 })

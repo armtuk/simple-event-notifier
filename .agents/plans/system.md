@@ -29,7 +29,7 @@ link) to drive a real triage workflow rather than just a notification stream.
 
 **In this repo:**
 
-- **The canonical event model** — the JSON shape and the `{timestamp}.{type}.{priority}.{source}.{name}.json`
+- **The canonical event model** — the JSON shape and the `{timestamp}.{type}.{priority}.{source}.{name}.{producer}.{id}.json`
   object-key scheme. This is the central contract every producer and consumer depends on.
 - **Infrastructure-as-Code** for the AWS substrate: the S3 event bucket, plus the
   bucket-change → notification → fan-out path with a TTL catch-up window and multiple
@@ -37,10 +37,13 @@ link) to drive a real triage workflow rather than just a notification stream.
 - **The webhook ingest function** — an API-Gateway-fronted Lambda that receives third-party
   webhooks, classifies them from payload/headers, wraps them into the event model, and
   writes the object to S3.
-- **Persistent client service(s)** for sources that require a long-lived connection rather
-  than a webhook, deployed as a container to a cheap host (Railway).
-- **The Event UI** — a lightweight web app (also on Railway) for viewing, acknowledging, and
-  handling events.
+- **AWS-native ingest for non-webhook sources** — where a source cannot deliver a webhook (no
+  admin rights on the repo/org, no push channel), a **scheduled Lambda** polls its API on a timer
+  and writes canonical events to S3. The GitHub Notifications fallback is the first instance. A
+  source that genuinely required a *long-lived* connection (e.g. a Slack Socket Mode websocket)
+  would run on **AWS Fargate/ECS** — but nothing on the current roadmap does.
+- **The Event UI** — a lightweight web app served as an **S3 + CloudFront static SPA** for viewing,
+  acknowledging, and handling events.
 
 **Out of scope / cross-cutting (not owned here):**
 
@@ -57,10 +60,18 @@ link) to drive a real triage workflow rather than just a notification stream.
 
 ## Key cross-cutting context
 
-- **The event model is the load-bearing contract.** Both producers (ingest Lambda, agents,
-  persistent clients) and consumers (UI, device clients, naive `aws s3 sync` cron) couple to
-  the JSON shape and the object-key naming scheme. Changing it ripples everywhere; treat it
-  as a versioned interface.
+- **The platform is AWS-only.** Every hosted component runs on AWS — webhook ingest and scheduled
+  polling on **Lambda**, static UI on **S3 + CloudFront**, all provisioned by the Terraform IaC.
+  There is **no Railway** (or other third-party PaaS) dependency: an earlier design hosted the
+  persistent clients and Event UI on Railway; that was removed on 2026-07-20 in favour of a single
+  AWS substrate. A future source needing a long-lived connection would use AWS Fargate/ECS.
+- **The event model is the load-bearing contract.** Both producers (ingest Lambda, poller Lambda,
+  agents) and consumers (UI, device clients, naive `aws s3 sync` cron) couple to the JSON shape and
+  the object-key naming scheme. The key carries a **`{producer}` segment** (the logical origin —
+  `github-webhook`, `github-poller`, or a machine hostname for local producers) and a **`{id}`
+  segment** (the provider's own delivery/event id where available, else a content hash) so that two
+  events sharing a timestamp and classification cannot collide onto one object. Changing the scheme
+  ripples everywhere; treat it as a versioned interface.
 - **S3 is the source of record**, not a cache. The append-only object set is simultaneously
   the live feed and the permanent history — there is no separate database.
 - **Fan-out is catch-up oriented, not real-time-guaranteed.** Clients may be offline; the

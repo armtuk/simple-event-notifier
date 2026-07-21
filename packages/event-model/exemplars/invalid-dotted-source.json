@@ -5,6 +5,8 @@
   "priority": 3,
   "source": "github.com",
   "name": "new-pull-request",
+  "producer": "github-webhook",
+  "eventId": "abc123",
   "acknowledged": false,
   "handled": false,
   "payload": {}

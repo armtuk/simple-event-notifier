@@ -1,0 +1,23 @@
+{
+  "zen": "Non-blocking is better than blocking.",
+  "hook_id": 578412996,
+  "hook": {
+    "type": "Repository",
+    "id": 578412996,
+    "name": "web",
+    "active": true,
+    "events": ["issues", "pull_request", "pull_request_review", "push", "release"],
+    "config": { "content_type": "json", "insecure_ssl": "0", "url": "https://hooks.personal-events.fifthdimensionengineering.com/github" },
+    "updated_at": "2026-07-19T20:11:03Z",
+    "created_at": "2026-07-19T20:11:03Z"
+  },
+  "repository": {
+    "id": 845667198,
+    "name": "aws-work-eventer",
+    "full_name": "fifthdimensionengineering/aws-work-eventer",
+    "private": true,
+    "owner": { "login": "fifthdimensionengineering", "id": 178294411, "type": "Organization" },
+    "html_url": "https://github.com/fifthdimensionengineering/aws-work-eventer"
+  },
+  "sender": { "login": "alexrmturner", "id": 1042318, "type": "User" }
+}

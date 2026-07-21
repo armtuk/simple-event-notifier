@@ -153,7 +153,7 @@ describe("runTick logging", () => {
   it("stamps every record with the service and environment the logging guidance requires", async () => {
     await runTick(dependenciesFor({}), { mark: "", consecutiveErrors: 0 })
     expect(captured.length).toBeGreaterThan(0)
-    expect(captured.every(entry => entry.service === "desktop-notifier" && entry.env === "dev")).toBe(true)
+    expect(captured.every(entry => entry.service === "desktop-notifier" && entry.env === "development")).toBe(true)
   })
 
   it("logs an undelivered notification at error, naming the adapter and the reason", async () => {

@@ -5,6 +5,7 @@
 | ADR | Date | Status | Summary |
 | :-- | :--- | :----- | :------ |
 | [iac-foundation](docs/decisions/2026-07-19-1900-iac-foundation/adr-body.md) | 2026-07-19 | Accepted | Terraform for the AWS substrate, native S3 state locking, and a delegated Route53 subdomain. |
+| [integration-template-and-dual-path](docs/decisions/2026-07-19-2130-integration-template-and-dual-path/adr-body.md) | 2026-07-19 | Accepted | A config-driven integration template every source plugs into, and dual webhook + poller ingestion for GitHub. |
 
 ## Introduction
 

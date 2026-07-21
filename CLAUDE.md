@@ -66,6 +66,22 @@ Biome covers no-semicolons, double quotes, width 140, `noExplicitAny`, `noEnum`,
   the heap signal, while real, needs `--expose-gc` and ~10⁵ ticks to clear the noise floor — a
   classic flaky spec. It is a review responsibility.
 
+## The two-bucket rule — operational state NEVER goes in the event bucket
+
+The event bucket holds events and nothing else. Delivery-dedupe markers, poller cursors, and any
+future operational state live in the **separate** `state.{env}.{system}.{domain}` bucket
+(`infra/personal-events/state-bucket.tf`).
+
+This is a correctness requirement, not organisation. `apps/desktop-notifier/src/poller.ts` lists the
+event bucket with `ListObjectsV2` `StartAfter` and **no prefix filter**, then advances its high-water
+mark to the highest key it saw. Event keys lead with a year — `2026-…` — while `deliveries/…` and
+`state/…` start with a letter, which sorts **above** every digit. A single non-event object in the
+event bucket would push a consumer's mark above every event key that will ever exist, and that
+consumer would **silently never receive another event**, with no error anywhere.
+
+Both `github-integration` story plans originally specified a prefix inside the event bucket; the
+separate bucket is the fix. Do not "simplify" it back.
+
 ## Documented carve-outs from the shared guidance
 
 Deviations recorded here so they are deliberate and bounded rather than eroding silently. Anything
@@ -77,20 +93,10 @@ not on this list follows `.agents/` as written.
   worse forced into an `else`, and the rule's real target is *branch selection* on one discriminator
   — which must still use a `Record` lookup. A guard clause selects nothing; it exits. This exemption
   covers guards that return or throw immediately, nothing more.
-- **The project has one environment vocabulary: `local`, `dev`, `qa`, `staging`, `prod`** —
-  `.agents/guidance/aws.md`'s list. It is used verbatim on both sides: the Terraform `env` variable
-  (both roots) validates against it, and the daemon's `ENV` is a `Schema.Literal` over the same five.
-  It differs from `.agents/guidance/logging.md`'s `["dev","qa","stage","prod"]` in two ways, and this
-  single sentence is the reason for both:
-  - **`local` is included.** The desktop notifier's ordinary home is a laptop; refusing the project's
-    own default environment would make it unusable out of the box.
-  - **The third environment is spelled `staging`, not `stage`.** One spelling has to win, because the
-    same value names S3 buckets and DNS labels on the Terraform side and stamps log records on the
-    TypeScript side — two spellings for one concept is the actual defect. `aws.md`'s spelling wins
-    because its values become durable, externally-visible resource names.
-
-  These are explicit literals, never fallbacks: an unrecognized `ENV` fails startup, which is the
-  harm `logging.md`'s closed set exists to prevent. `infra/*/variables.tf` and
-  `apps/desktop-notifier/src/config.ts` both point back here.
 - **`rewriteRelativeImportExtensions` replaces `allowImportingTsExtensions`** — see the TypeScript
   section above.
+
+> The environment-vocabulary carve-out was removed on 2026-07-21: `.agents/guidance/aws.md` now
+> pins the project to **`development` / `production`** (full words), and the code matches it exactly
+> — the Terraform `env` variable (both roots) and every app's `ENV` `Schema.Literal` use those two
+> values, with no deviation left to document.

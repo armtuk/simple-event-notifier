@@ -37,21 +37,21 @@ describe("parseConfig", () => {
     expect(Either.getOrThrow(parseConfig({ ...baseEnv, NOTIFIER: value })).notifier).toBe(value)
   })
 
-  it.each(["local", "dev", "qa", "staging", "prod"])("accepts the %s environment", value => {
+  it.each(["development", "production"])("accepts the %s environment", value => {
     expect(Either.getOrThrow(parseConfig({ ...baseEnv, ENV: value })).env).toBe(value)
   })
 
-  it("uses the project's single environment vocabulary, matching the Terraform env variable", () => {
-    // logging.md spells the third environment "stage"; this project uses aws.md's "staging" on both
-    // sides so bucket/DNS labels and log records cannot disagree. See CLAUDE.md.
-    expect(Either.isLeft(parseConfig({ ...baseEnv, ENV: "stage" }))).toBe(true)
-    expect(Either.getOrThrow(parseConfig({ ...baseEnv, ENV: "staging" })).env).toBe("staging")
+  it("uses the project's two-value environment vocabulary, matching the Terraform env variable", () => {
+    // aws.md pins the project to development / production (full words) on both sides, so bucket/DNS
+    // labels and log records cannot disagree. The older short spellings are refused.
+    expect(Either.isLeft(parseConfig({ ...baseEnv, ENV: "staging" }))).toBe(true)
+    expect(Either.isLeft(parseConfig({ ...baseEnv, ENV: "local" }))).toBe(true)
   })
 
-  it("refuses to start on a mistyped ENV rather than silently stamping every log record as dev", () => {
-    const error = Either.getOrThrow(Either.flip(parseConfig({ ...baseEnv, ENV: "production" })))
+  it("refuses to start on a mistyped ENV rather than silently stamping every log record", () => {
+    const error = Either.getOrThrow(Either.flip(parseConfig({ ...baseEnv, ENV: "prod" })))
     expect(error).toContain("env")
-    expect(error).toContain("production")
+    expect(error).toContain("prod")
   })
 
   it.each(["error", "warn", "info", "debug"])("accepts the %s log level", value => {

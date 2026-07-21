@@ -46,7 +46,7 @@ describe.skipIf(!enabled)("desktop-notifier end to end", () => {
         s3: createFakeS3({ objects }).client,
         bucket: "events.local.personal-events.example.com",
         notifier: createNotifier("auto"),
-        logger: createDaemonLogger({ level: "info", env: "dev" }),
+        logger: createDaemonLogger({ level: "info", env: "development" }),
         stateFile: join(directory, "state.json")
       },
       { mark: "", consecutiveErrors: 0 }

@@ -1,0 +1,33 @@
+{
+  "name": "@personal-events/webhook-ingest",
+  "version": "0.0.1",
+  "description": "API Gateway-fronted Lambda that receives third-party webhooks and writes canonical events to S3",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsup",
+    "lint": "biome check src/",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "catalog:",
+    "@aws-sdk/client-ssm": "catalog:",
+    "@aws-sdk/credential-providers": "catalog:",
+    "@octokit/webhooks-methods": "catalog:",
+    "@personal-events/event-model": "workspace:*",
+    "@personal-events/event-sink": "workspace:*",
+    "@personal-events/github": "workspace:*",
+    "@personal-events/integration-core": "workspace:*",
+    "effect": "catalog:",
+    "winston": "catalog:"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "catalog:",
+    "@types/aws-lambda": "catalog:",
+    "@types/node": "catalog:",
+    "tsup": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

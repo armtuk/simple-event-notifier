@@ -83,6 +83,29 @@ export const EventSchema = /*#__PURE__*/ Schema.Struct({
   priority: Priority,
   source: NoDotString,
   name: NoDotString,
+  /**
+   * The **logical origin** of the event — a machine hostname for a local producer, or an explicit
+   * constant for a deployed one (`github-webhook`, `github-poller`). Distinct from `source` (which
+   * system the event is *about*): two producers can report the same `source`, and `producer` is part
+   * of what keeps their object keys apart.
+   *
+   * It is a `NoDotString`, so a **hostname must be dot-safed first** — `os.hostname()` is commonly a
+   * dotted FQDN (`laptop.local`, `host.corp.example.com`), which this schema rejects. Pass it through
+   * `@personal-events/github`'s `toDotSafe` (or an equivalent) before constructing the event.
+   */
+  producer: NoDotString,
+  /**
+   * The provider's own delivery/event id where one exists (`X-GitHub-Delivery`, a notification or
+   * activity id), else a content hash of the body (`contentHashId`). It keeps two genuinely-distinct
+   * events from colliding onto one key.
+   *
+   * Whether it also makes a *re-delivery* idempotent depends on the **`timestamp`**, which leads the
+   * key: for a content-timestamped producer (the poller; a local agent) the whole key rebuilds
+   * identically, so a redelivery is a harmless overwrite; for the webhook path, whose `timestamp` is
+   * a wall clock re-read per delivery, a redelivery builds a *different* key, so its dedupe store —
+   * not this field — is what prevents duplicate history. (See the README.)
+   */
+  eventId: NoDotString,
   acknowledged: Schema.Boolean,
   handled: Schema.Boolean,
   workItem: Schema.optionalWith(WorkItemUrl, { exact: true }),

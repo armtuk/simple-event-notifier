@@ -36,7 +36,7 @@ export const capturingLogger = (): CapturingLogger => {
       done()
     }
   })
-  const logger = createDaemonLogger({ level: "debug", env: "dev" })
+  const logger = createDaemonLogger({ level: "debug", env: "development" })
   logger.clear()
   logger.add(new transports.Stream({ stream, format: format.json(), level: "debug" }))
   return { logger, captured }
