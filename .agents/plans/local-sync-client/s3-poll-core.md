@@ -1,16 +1,18 @@
 ---
 id: AWE-152
-title: Desktop notifier daemon (end-to-end S3 → notification)
+title: S3 poll core — prefix window, cursor & restart semantics
 type: story
-status: ready
+status: todo:backlog
 parent: ./feature.md
 branch: feat/bootstrap-and-iac
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-28
-updated: 2026-06-28
+updated: 2026-08-03
 ---
 
-# Story: Desktop notifier daemon (end-to-end S3 → notification)
+# Story: S3 poll core — prefix window, cursor & restart semantics
+
+> **Restructured 2026-08-03.** Re-scoped from *Desktop notifier daemon* and split. This story now owns **only** the read loop — time-prefix-bounded listing, cursor tracking, restart semantics and `Schedule`-driven backoff. Decoding and output moved to AWE-216; everything about desktop notifications moved to the `macos-notifications` feature (AWE-217, AWE-218). **The `## Plan` below still describes the notifier daemon — re-run `/plan-story` before executing.**
 
 ## Definition
 

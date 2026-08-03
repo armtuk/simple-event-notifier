@@ -2,15 +2,17 @@
 id: AWE-157
 title: GitHub activity poller — Events + Notifications (Railway fallback)
 type: story
-status: ready
+status: todo:abandoned
 parent: ./feature.md
 branch: github-integration
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-28
-updated: 2026-06-29
+updated: 2026-08-03
 ---
 
 # Story: GitHub activity poller — Events + Notifications (Railway fallback)
+
+> **Restructured 2026-08-03.** **Abandoned 2026-08-03.** The dual-path (webhook + poller) design existed to cover the case where the user lacks webhook-admin rights. The target repositories are owned by the `armtuk` user, so webhooks are configurable and the fallback is unnecessary. Consequence recorded deliberately: GitHub does **not** auto-retry failed deliveries, so abandoning the poller removes the practical backstop for a lost delivery — see the Risks section of `./feature.md`. If webhook admin is ever unavailable for some repository, that is a new feature, not a revival of this one.
 
 ## Definition
 

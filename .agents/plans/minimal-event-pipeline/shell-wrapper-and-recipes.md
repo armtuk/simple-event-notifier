@@ -6,8 +6,8 @@ status: todo:backlog
 parent: ./feature.md
 pm-tool: Airtable
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
-created: 2026-08-02
-updated: 2026-08-02
+created: 2026-08-03
+updated: 2026-08-03
 ---
 
 # Story: Shell wrapper, `$PATH` install & push recipes

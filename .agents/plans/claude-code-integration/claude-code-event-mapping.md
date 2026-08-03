@@ -2,15 +2,17 @@
 id: AWE-161
 title: Claude Code event mapping (@personal-events/claude-code)
 type: story
-status: ready
+status: todo:backlog
 parent: ./feature.md
 branch: feat/claude-code-integration
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-29
-updated: 2026-06-29
+updated: 2026-08-03
 ---
 
 # Story: Claude Code event mapping (@personal-events/claude-code)
+
+> **Restructured 2026-08-03.** Consumes `@personal-events/core` (AWE-153) instead of the former `integration-core`, and is now explicitly this feature's **Transformer + Service** per ADR `2026-08-03-0028-layered-architecture`. Re-run `/plan-story` before executing.
 
 ## Definition
 

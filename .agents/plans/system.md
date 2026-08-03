@@ -69,9 +69,18 @@ link) to drive a real triage workflow rather than just a notification stream.
 - **Event semantics:** `eventType` is `alert` (needs attention) or `notification` (info);
   `priority` is 1–8; `acknowledged` and `handled` are independent boolean flags a client can
   flip to drive triage.
-- **First sources to support:** GitHub and LLM agents (Claude Code hooks). **Slack is shelved
+- **Architecture is governed by two accepted ADRs**, indexed in `README.md`:
+  `2026-08-03-0028-layered-architecture` (Application Model, a Repository in front of every external
+  system, Transformers as the only code that knows a foreign shape, one functional area per 3P
+  integration) and `2026-08-03-0035-effect-as-default-idiom` (Effect for schema, structure and
+  async). Read both before planning or building.
+- **Build order, as restructured on 2026-08-03:** the minimal pipeline first (bucket, DNS, event
+  model, push), then a local sync client, then macOS notifications, then Claude Code, then GitHub.
+  The principle is that nothing integrates a third party until an event has demonstrably been
+  written to and read from S3.
+- **First sources to support:** Claude Code hooks, then GitHub webhooks. **Slack is shelved
   as of 2026-07-19** — ingesting Slack requires creating an internal Slack **App**, and there is
-  no personal-token-only fallback; the `slack-integration` feature is `Abandoned` pending
+  no personal-token-only fallback; the `slack-integration` feature is abandoned pending
   workspace permissions and would be re-planned as a new feature if they are granted. The broader
   source list (email, calendar, package delivery, incident pages, Jira, Airtable, Confluence)
   is the roadmap, not the first cut.
@@ -84,10 +93,9 @@ the link is bidirectional and must be kept so.
 
 | Area | Features | Capability it owns |
 | :--- | :--- | :--- |
-| `platform-foundation` | `bootstrap-and-iac` | The monorepo and shared tooling, the canonical **event model** (JSON shape + object-key codec), and the AWS substrate — S3 event bucket, delegated Route53 zone, Terraform remote state. Everything else depends on this. |
-| `event-sources` | `github-integration`, `claude-code-integration`, `slack-integration` *(abandoned)* | Per-source ingestion: the reusable integration template, provider payload schemas, mapping configs, normalizers, and the deployed pathways events arrive through (webhook ingest, pollers, persistent clients). |
-| `producer-tooling` | `event-push-cli` | Local, infra-free ways to **push** events into the bucket — the CLI and shell wrapper used by cron jobs, git hooks, CI steps, and ad-hoc scripts, and the practical validation instrument for the bucket and consumers. |
-| `event-consumers` | _none yet_ | Reading the bucket and acting on it: desktop/device notifiers, the Event UI, and the acknowledge/handle triage workflow. Currently exists only as the `desktop-notifier-daemon` story inside `bootstrap-and-iac`; the Event UI is roadmap. |
+| `platform-foundation` | `minimal-event-pipeline` | The monorepo and shared tooling, the **Application Model** (event schema + object-key codec), the layer contracts, the AWS substrate (S3 event bucket, delegated Route53 zone, remote state), and the shell-invocable push path every producer and cron job uses. Everything else depends on this. |
+| `event-consumers` | `local-sync-client`, `macos-notifications` | Reading the bucket and acting on it: the polling sync client, native notification delivery, and — roadmap — the Event UI and the acknowledge/handle triage workflow. |
+| `event-sources` | `claude-code-integration`, `github-integration`, `slack-integration` *(abandoned)* | Per-source ingestion. Each is a self-contained functional area holding that provider's 3P models, transformer, classification service and controller, per ADR `2026-08-03-0028-layered-architecture`. |
 
 ## Links
 

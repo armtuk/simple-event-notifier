@@ -2,15 +2,17 @@
 id: AWE-155
 title: Generic webhook ingest (API Gateway + Lambda)
 type: story
-status: ready
+status: todo:backlog
 parent: ./feature.md
 branch: github-integration
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-28
-updated: 2026-06-29
+updated: 2026-08-03
 ---
 
 # Story: Generic webhook ingest (API Gateway + Lambda)
+
+> **Restructured 2026-08-03.** The Terraform this story creates was parked in the future-state area by AWE-215 during F1, so this is now a **restore-and-wire** story rather than a greenfield one — restore only what is needed and re-verify against `.agents/guidance/deployment-environments/aws.md`. Signatures must be `Effect` per ADR `2026-08-03-0035-effect-as-default-idiom`. Re-run `/plan-story` before executing.
 
 ## Definition
 

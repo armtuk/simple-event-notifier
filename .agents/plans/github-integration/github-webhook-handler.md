@@ -2,15 +2,17 @@
 id: AWE-156
 title: GitHub webhook handler (signature verify → S3)
 type: story
-status: ready
+status: todo:backlog
 parent: ./feature.md
 branch: github-integration
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-28
-updated: 2026-06-29
+updated: 2026-08-03
 ---
 
 # Story: GitHub webhook handler (signature verify → S3)
+
+> **Restructured 2026-08-03.** Writes through F1's `@personal-events/s3-repository` (AWE-213) rather than a feature-local writer. The code sketches in `## Plan` were converted from `Promise` to `Effect` on 2026-08-03 per ADR `2026-08-03-0035-effect-as-default-idiom`; the surrounding task list still predates the restructure. Re-run `/plan-story` before executing.
 
 ## Definition
 
@@ -143,60 +145,96 @@ From `.agents/general.md`, `.agents/guidance/aws.md`, `.agents/guidance/logging.
 - [SSM Parameter Store SecureString from Lambda](https://docs.aws.amazon.com/systems-manager/latest/userguide/sysman-paramstore-securestring.html) — Why: `GetParameter` WithDecryption + IAM.
 
 ### Patterns to follow
-- **The integration (`handle`)** — guards then G-C-P:
+> **Idiom:** all signatures below are `Effect` per ADR `2026-08-03-0035-effect-as-default-idiom`.
+> Dependencies arrive as `Context.Tag` services provided by `Layer`, not constructor arguments;
+> pure fallible helpers (`parseJson`, `githubToEvent`) stay `Either`. Raw `Promise` appears only in
+> the Lambda `handler` export, via `Effect.runPromise`.
+
+- **The integration (`handle`)** — guards then G-C-P. Every remaining typed failure is folded to a
+  `WebhookOutcome` at the very end, because a webhook handler must *always* yield an HTTP status:
   ```ts
-  export class GithubWebhookIntegration implements WebhookIntegration {
-    source = "github"
-    constructor(
-      public secret: WebhookSecretRepository,
-      public dedupe: DeliveryDedupeRepository,
-      public events: S3EventRepository,
-      public compiled: CompiledConfig,
-      public clock: { nowIso(): string },
-      public log: Logger
-    ) {}
-    handle = async (req: RawRequest): Promise<WebhookOutcome> => {
-      const sig = req.headers["x-hub-signature-256"]
-      const secret = await this.secret.get()
-      if (!sig || !(await verify(secret, req.rawBody, sig))) {
-        this.log.warn("github signature rejected", { deliveryId: req.headers["x-github-delivery"] })
-        return { status: "unauthorized" }
-      }
-      const eventName = req.headers["x-github-event"] ?? ""
-      if (eventName === "ping") return { status: "ack" }
-      const deliveryId = req.headers["x-github-delivery"] ?? ""
-      if (await this.dedupe.seen(deliveryId)) { this.log.info("duplicate delivery", { deliveryId }); return { status: "ack" } }
-      const parsed = parseJson(req.rawBody)                      // Either<unknown, Error>, post-verify
-      if (Either.isLeft(parsed)) return { status: "bad-request", reason: "invalid json" }
-      const event = githubToEvent(this.compiled)({ eventName, deliveryId, receivedAt: this.clock.nowIso(), raw: parsed.right })
-      if (Either.isLeft(event)) { this.log.warn("github unprocessable", { deliveryId, eventName, reason: event.left }); return { status: "bad-request", reason: "unprocessable" } }
-      const put = await this.events.putEvents([event.right])
-      if (put.status === "failure") { this.log.error("github s3 put failed", { deliveryId, error: put.error }); return { status: "server-error" } }
-      await this.dedupe.record(deliveryId)                       // only after successful persist
-      return { status: "events", count: 1 }
-    }
-  }
+  export const makeGithubWebhookIntegration = Effect.gen(function* () {
+    const secret = yield* WebhookSecretRepository
+    const dedupe = yield* DeliveryDedupeRepository
+    const events = yield* S3EventRepository
+    const compiled = yield* GithubMappingConfig
+    const clock = yield* Clock
+
+    const handle = (req: RawRequest): Effect.Effect<WebhookOutcome> =>
+      Effect.gen(function* () {
+        const sig = req.headers["x-hub-signature-256"]
+        const key = yield* secret.get
+        if (!sig || !(yield* verifySignature(key, req.rawBody, sig))) {
+          yield* Effect.logWarning("github signature rejected")
+            .pipe(Effect.annotateLogs({ deliveryId: req.headers["x-github-delivery"] }))
+          return { status: "unauthorized" } as const
+        }
+        const eventName = req.headers["x-github-event"] ?? ""
+        if (eventName === "ping") return { status: "ack" } as const
+        const deliveryId = req.headers["x-github-delivery"] ?? ""
+        if (yield* dedupe.seen(deliveryId)) {
+          yield* Effect.logInfo("duplicate delivery").pipe(Effect.annotateLogs({ deliveryId }))
+          return { status: "ack" } as const
+        }
+        const parsed = parseJson(req.rawBody)                    // Either — pure, post-verify
+        if (Either.isLeft(parsed)) return { status: "bad-request", reason: "invalid json" } as const
+        const receivedAt = yield* clock.nowIso
+        const event = githubToEvent(compiled)({ eventName, deliveryId, receivedAt, raw: parsed.right })
+        if (Either.isLeft(event)) {
+          yield* Effect.logWarning("github unprocessable")
+            .pipe(Effect.annotateLogs({ deliveryId, eventName, reason: event.left }))
+          return { status: "bad-request", reason: "unprocessable" } as const
+        }
+        yield* events.putEvents([event.right])                   // S3 failure fails the channel
+        yield* dedupe.record(deliveryId)                         // only after successful persist
+        return { status: "events", count: 1 } as const
+      }).pipe(
+        Effect.catchAll(cause =>
+          Effect.logError("github webhook failed", cause)
+            .pipe(Effect.as({ status: "server-error" } as const)))
+      )
+
+    return { source: "github", handle } as const
+  })
   ```
-- **Secret repo (memoized SSM)** — one network read per cold start:
+  Note what the typed error channel removes: the old `if (put.status === "failure")` check is gone —
+  a failed `putEvents` short-circuits to the `catchAll`, so it is impossible to forget to handle.
+- **Secret repo (memoized SSM)** — `Effect.cached` replaces the hand-rolled promise memo and is
+  fiber-safe, while keeping the one-network-read-per-cold-start property:
   ```ts
-  export class WebhookSecretRepository {
-    cached: Promise<string> | undefined
-    constructor(public ssm: SSMClient, public paramName: string) {}
-    get = (): Promise<string> => (this.cached ??= this.fetch())
-    fetch = async (): Promise<string> => {
-      const out = await this.ssm.send(new GetParameterCommand({ Name: this.paramName, WithDecryption: true }))
-      return out.Parameter?.Value ?? Promise.reject(new Error(`missing secret ${this.paramName}`))
-    }
-  }
+  export const WebhookSecretRepositoryLive = Layer.effect(
+    WebhookSecretRepository,
+    Effect.gen(function* () {
+      const ssm = yield* SsmClient
+      const paramName = yield* Config.string("GITHUB_WEBHOOK_SECRET_PARAM")
+      const fetch = Effect.tryPromise({
+        try: () => ssm.send(new GetParameterCommand({ Name: paramName, WithDecryption: true })),
+        catch: cause => new SecretFetchError({ paramName, cause })
+      }).pipe(
+        Effect.flatMap(out => out.Parameter?.Value
+          ? Effect.succeed(out.Parameter.Value)
+          : Effect.fail(new SecretMissingError({ paramName })))
+      )
+      return { get: yield* Effect.cached(fetch) } as const      // memoized, typed failure
+    })
+  )
   ```
 - **Dedupe repo (S3 markers)** — `seen` = HeadObject exists; `record` = PutObject a tiny marker:
   ```ts
-  seen = async (id: string): Promise<boolean> =>
-    this.s3.send(new HeadObjectCommand({ Bucket: this.bucket, Key: `${this.prefix}/${id}` }))
-      .then(() => true).catch(e => e.name === "NotFound" ? false : Promise.reject(e))
+  seen: (id: string): Effect.Effect<boolean, DedupeError> =>
+    Effect.tryPromise({
+      try: () => s3.send(new HeadObjectCommand({ Bucket: bucket, Key: `${prefix}/${id}` })),
+      catch: cause => cause
+    }).pipe(
+      Effect.as(true),
+      Effect.catchIf(isNotFoundError, () => Effect.succeed(false)),  // genuine 404 → not seen
+      Effect.mapError(cause => new DedupeError({ id, cause }))       // anything else fails the channel
+    )
   ```
   (Differentiate a genuine `NotFound` from other errors — a transient S3 error must not be read
-  as "not seen" and silently allow a dup; reject so the handler 5xxes and the delivery retries.)
+  as "not seen" and silently allow a dup. With the typed error channel this becomes *structural*
+  rather than a convention: only `NotFound` is caught to `false`; every other failure propagates to
+  the handler's `catchAll`, yields a 5xx, and GitHub's manual redelivery is the recovery path.)
 - **Unmapped events**: `githubToEvent` returns a `Right` (classified to `default`) — these are
   written, not dropped; log `warn` when the resolved rule was the fallback (the normalizer/transform
   can surface "used default" or the integration infers it).

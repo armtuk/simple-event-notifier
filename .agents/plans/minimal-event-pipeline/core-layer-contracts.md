@@ -1,16 +1,18 @@
 ---
 id: AWE-153
-title: Reusable integration template (integration-core)
+title: Core layer contracts (@personal-events/core)
 type: story
-status: ready
+status: todo:backlog
 parent: ./feature.md
 branch: github-integration
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-28
-updated: 2026-06-29
+updated: 2026-08-03
 ---
 
-# Story: Reusable integration template (integration-core)
+# Story: Core layer contracts (@personal-events/core)
+
+> **Restructured 2026-08-03.** Re-scoped from *Reusable integration template (`integration-core`)* and moved out of `github-integration` — it was never GitHub-specific, and its placement there transitively blocked every other integration. It now owns the `Repository` / `Service` / `Transformer` contracts from ADR `2026-08-03-0028-layered-architecture`, plus the mapping-config schema and typed errors. **Dropped:** `SourceAdapter` and `SecondaryProcessor` (no implementations, deferred execution model) and the `channel` discriminant with its compile step, which existed to reconcile GitHub's two API namespaces — AWE-157 was abandoned, leaving one channel. **The `## Plan` below predates this and is partly stale — re-run `/plan-story` before executing.**
 
 ## Definition
 

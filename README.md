@@ -68,3 +68,10 @@ Some of the sources will likely require some kind of persistent-permanently acti
 - Github
 - LLM Agents
 - Slack Messages
+
+## Architecture Decision Records
+
+| ADR | Date | Status | Summary |
+| :-- | :--- | :----- | :------ |
+| [layered-architecture](docs/decisions/2026-08-03-0028-layered-architecture/adr-body.md) | 2026-08-03 | Accepted | Application Model, a Repository boundary in front of every external system, Transformers as the only code that knows a foreign shape, and one functional area per 3P integration. |
+| [effect-as-default-idiom](docs/decisions/2026-08-03-0035-effect-as-default-idiom/adr-body.md) | 2026-08-03 | Accepted | Effect is the default for schema (`effect/Schema`, no Zod), code structure (`Context.Tag` + `Layer` DI), and async (`Effect<A, E, R>`; raw `Promise` only at the process boundary). |

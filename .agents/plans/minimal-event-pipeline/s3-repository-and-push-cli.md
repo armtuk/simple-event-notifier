@@ -1,16 +1,18 @@
 ---
 id: AWE-213
-title: Event push CLI (@personal-events/event-push)
+title: S3 event repository & push CLI
 type: story
 status: todo:backlog
 parent: ./feature.md
 pm-tool: Airtable
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
-created: 2026-08-02
-updated: 2026-08-02
+created: 2026-08-03
+updated: 2026-08-03
 ---
 
-# Story: Event push CLI (`@personal-events/event-push`)
+# Story: S3 event repository & push CLI
+
+> **Restructured 2026-08-03.** Absorbs AWE-160 — Shared S3 event writer, which was abandoned. This story now delivers the **Repository** over S3 (the Persist boundary every later producer calls) *and* the `bin` that drives it, rather than a library and a CLI as separate stories. Per ADR `2026-08-03-0035-effect-as-default-idiom` the repository returns `Effect`, not `Promise`.
 
 ## Definition
 

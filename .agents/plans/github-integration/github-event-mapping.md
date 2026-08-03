@@ -2,15 +2,17 @@
 id: AWE-154
 title: GitHub payload schemas, mapping config & normalizer
 type: story
-status: ready
+status: todo:backlog
 parent: ./feature.md
 branch: github-integration
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-28
-updated: 2026-06-29
+updated: 2026-08-03
 ---
 
 # Story: GitHub payload schemas, mapping config & normalizer
+
+> **Restructured 2026-08-03.** The mapping config no longer models two GitHub namespaces — AWE-157 (the Notifications/Events poller) was abandoned, so there is a single webhook channel keyed on `X-GitHub-Event` + `action`. The normalizer is now the feature's **Transformer** per ADR `2026-08-03-0028-layered-architecture`, and consumes `@personal-events/core` rather than the former `integration-core`. Re-run `/plan-story` before executing.
 
 ## Definition
 

@@ -6,9 +6,10 @@ file is **command-maintained** (`/update-glossary`, the planning commands, ADR a
 a normal tracked doc that a human may edit directly. The glossary **summarizes**; where a term
 has a canonical definition elsewhere, the entry links there.
 
-_Last updated: 2026-08-02 — seeded by `/plan-feature` for `event-push-cli`. A full
-`/update-glossary` sweep has not yet been run, so coverage is currently limited to the event
-model, the push path, and the planning vocabulary they rely on._
+_Last updated: 2026-08-03 — seeded by `/plan-feature` for `event-push-cli`, then extended with the
+layering vocabulary coined by ADR `2026-08-03-0028-layered-architecture`. A full `/update-glossary`
+sweep has not yet been run, so coverage is currently limited to the event model, the push path, the
+architectural layers, and the planning vocabulary they rely on._
 
 ## Terms of art
 
@@ -19,11 +20,34 @@ model, the push path, and the planning vocabulary they rely on._
   to a *Notification*. Which provider events are alerts is config-driven per integration; for a
   *Push* the caller states it explicitly.
   *Canonical:* [`system.md` → Key cross-cutting context](../.agents/plans/system.md).
+- **Application Model** — The canonical internal shape — here the `Event` — that all business
+  logic accepts and returns. Fully validated at every boundary crossing, so code above the
+  *Repository* may treat its correctness as guaranteed. No third-party shape is ever an
+  Application Model. *Canonical:* [ADR `2026-08-03-0028-layered-architecture`](decisions/2026-08-03-0028-layered-architecture/adr-body.md).
+- **Business Logic Service** — A layer-2 object holding the system's actual decisions
+  (classification, priority, triage). Transits *Application Model* values only, performs no I/O,
+  and receives its data pre-gathered.
+  *Canonical:* [ADR `2026-08-03-0028-layered-architecture`](decisions/2026-08-03-0028-layered-architecture/adr-body.md).
 - **Canonical event** — The normalized JSON object every producer writes and every consumer
   reads: `timestamp`, `eventType`, `priority`, `source`, `name`, `acknowledged`, `handled`,
   optional `workItem`, and a provider-specific `payload`. The system's single load-bearing
   contract — treated as a versioned interface.
   *Canonical:* [`event-model-package.md` (AWE-150)](../.agents/plans/bootstrap-and-iac/event-model-package.md).
+- **Command** — A directed request to a known recipient that causes an action, as distinct from an
+  *event* (a published fact that consumers pull). Writing to the bucket is a `PushEvent` command;
+  what lands in S3 is the resulting fact.
+  *Canonical:* [ADR `2026-08-03-0028-layered-architecture`](decisions/2026-08-03-0028-layered-architecture/adr-body.md).
+- **Controller / Handler** — The layer-1 entry point: the webhook Lambda handler, the push CLI's
+  argv entry, the sync client's poll loop. Owns protocol concerns only — status codes, exit codes,
+  deserialization — and contains no business logic.
+  *Canonical:* [ADR `2026-08-03-0028-layered-architecture`](decisions/2026-08-03-0028-layered-architecture/adr-body.md).
+- **Effect** — Both the library (`effect@^3`) and its core type `Effect<A, E, R>`: a description of
+  a computation that succeeds with `A`, fails with `E`, or requires context `R`. In this project
+  every function that performs I/O returns one; pure fallible code stays `Either`.
+  *Canonical:* [ADR `2026-08-03-0035-effect-as-default-idiom`](decisions/2026-08-03-0035-effect-as-default-idiom/adr-body.md).
+- **Entity Model** — The shape data takes *in a store*, as opposed to the *Application Model*. For
+  this system the S3 object — its key plus JSON body — is the Entity Model of the event repository.
+  *Canonical:* [ADR `2026-08-03-0028-layered-architecture`](decisions/2026-08-03-0028-layered-architecture/adr-body.md).
 - **Event model** — The shared package (`@personal-events/event-model`) that defines the
   *Canonical event* schema and the *Object-key codec*. Depended on by every producer and consumer
   so the contract exists exactly once.
@@ -35,6 +59,11 @@ model, the push path, and the planning vocabulary they rely on._
 - **Handled** — A boolean flag on an event, independent of *Acknowledged*, recording that the
   underlying issue has actually been dealt with. The other half of the triage workflow.
   *Canonical:* [`system.md` → Key cross-cutting context](../.agents/plans/system.md).
+- **Layer** — Effect's construction-and-wiring primitive (`Layer<ROut, E, RIn>`). This project's
+  **dependency-injection mechanism**: services are declared with `Context.Tag` and provided as
+  Layers, which `.agents/object-types.md` explicitly exempts from its constructor-DI rule. Test
+  doubles are alternative Layers rather than mocks.
+  *Canonical:* [ADR `2026-08-03-0035-effect-as-default-idiom`](decisions/2026-08-03-0035-effect-as-default-idiom/adr-body.md).
 - **Naive client** — A consumer that reads events with nothing more than `aws s3 sync` on a cron
   plus an mtime scan. Deliberately blessed as a first-class consumption path: if the naive client
   works, the contract is simple enough.
@@ -59,9 +88,22 @@ model, the push path, and the planning vocabulary they rely on._
 - **Push recipe** — A documented, copy-paste shell snippet that wires some everyday trigger — a
   crontab line, a git hook, a CI step, a long-job completion — to an `event-push` invocation.
   *Canonical:* [`shell-wrapper-and-recipes.md` (AWE-214)](../.agents/plans/event-push-cli/shell-wrapper-and-recipes.md).
+- **Repository** — The layer-5 boundary in front of an external system. Accepts and returns
+  *Application Model* values, and owns all knowledge of how to talk to its store. **A third-party
+  API is a store like any other** — GitHub sits behind a Repository exactly as S3 does.
+  *Canonical:* [ADR `2026-08-03-0028-layered-architecture`](decisions/2026-08-03-0028-layered-architecture/adr-body.md).
 - **Source** — The identifier of the originating system on an event (`github`, `claude-code`,
   `cron`, …). Appears both in the *Canonical event* body and as a segment of the object key.
   *Canonical:* [`system.md` → Key cross-cutting context](../.agents/plans/system.md).
+- **Transformer** — The converter sitting at a *Repository* boundary, translating between the
+  *Application Model* and a store's *Entity Model* or a third party's payload shape. **The only
+  code in the system permitted to know a foreign shape**, which is what keeps provider vocabulary
+  from leaking upward.
+  *Canonical:* [ADR `2026-08-03-0028-layered-architecture`](decisions/2026-08-03-0028-layered-architecture/adr-body.md).
+- **Typed error channel** — The `E` in `Effect<A, E, R>`: failures are values carried in the type
+  signature as `Schema.TaggedError` subclasses, so the compiler knows every way a call can fail.
+  Errors are never thrown and never collapsed into a `Promise` rejection.
+  *Canonical:* [ADR `2026-08-03-0035-effect-as-default-idiom`](decisions/2026-08-03-0035-effect-as-default-idiom/adr-body.md).
 - **Work item** — An optional URL on an event pointing at a ticket in an external system, whose
   own workflow and statuses a more sophisticated client may choose to interact with.
   *Canonical:* [`README.md`](../README.md).

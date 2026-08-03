@@ -1,16 +1,18 @@
 ---
 id: AWE-151
-title: "IaC: S3 event bucket & Route53 delegated zone (Terraform)"
+title: IaC: S3 event bucket & delegated DNS (development + production)
 type: story
-status: ready
+status: todo:backlog
 parent: ./feature.md
 branch: feat/bootstrap-and-iac
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-28
-updated: 2026-06-28
+updated: 2026-08-03
 ---
 
-# Story: IaC — S3 event bucket & Route53 delegated zone (Terraform)
+# Story: IaC: S3 event bucket & delegated DNS (development + production)
+
+> **Restructured 2026-08-03.** Scope changed. The bucket is now **extracted from the inherited `network.tf`** by AWE-215 rather than authored greenfield, and the zone must create **both `development` and `production`** subdomains per `.agents/guidance/deployment-environments/aws.md`. **The `## Plan` below predates this — re-run `/plan-story` before executing.**
 
 ## Definition
 

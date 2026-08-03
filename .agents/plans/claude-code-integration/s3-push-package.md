@@ -2,15 +2,17 @@
 id: AWE-160
 title: Shared S3 event writer (@personal-events/s3-push)
 type: story
-status: ready
+status: todo:abandoned
 parent: ./feature.md
 branch: feat/claude-code-integration
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-29
-updated: 2026-06-29
+updated: 2026-08-03
 ---
 
 # Story: Shared S3 event writer (@personal-events/s3-push)
+
+> **Restructured 2026-08-03.** **Abandoned 2026-08-03.** Absorbed into AWE-213 — S3 event repository & push CLI, in the `minimal-event-pipeline` feature. Splitting a write-only library from the CLI that drives it produced two stories where one coherent Repository belongs, and it stranded the shared writer behind all of GitHub in the old dependency order. The Repository contract it described survives; only this story's separate existence does not.
 
 ## Definition
 

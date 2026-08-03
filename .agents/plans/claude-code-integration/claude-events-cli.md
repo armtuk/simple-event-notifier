@@ -2,15 +2,17 @@
 id: AWE-162
 title: Publishable hook CLI (@alexrmturner/claude-events)
 type: story
-status: ready
+status: todo:backlog
 parent: ./feature.md
 branch: feat/claude-code-integration
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-29
-updated: 2026-06-29
+updated: 2026-08-03
 ---
 
 # Story: Publishable hook CLI (@alexrmturner/claude-events)
+
+> **Restructured 2026-08-03.** Writes through F1's `@personal-events/s3-repository` (AWE-213); AWE-160 was abandoned. The code sketches in `## Plan` were converted from `Promise` to `Effect` on 2026-08-03 per ADR `2026-08-03-0035-effect-as-default-idiom`. Re-run `/plan-story` before executing.
 
 ## Definition
 
@@ -154,12 +156,16 @@ Code, without standing up infrastructure and without slowing down or breaking a 
   `platform: "node"`, `target: "node24"`, `dts: false`, `fixedExtension: true` (→ `.mjs`),
   `outputOptions: { banner: "#!/usr/bin/env node\n" }`,
   `deps: { alwaysBundle: [/^@personal-events\//], neverBundle: ["@aws-sdk/client-s3", "effect"] }`.
-- `apps/claude-events/src/cli.ts` — the bin entry: parse argv (`--file`, `--dry-run`/`--print`,
-  `--bucket`, `--region`), call `run`, map `RunResult` → stderr log, `process.exit(0)`.
-- `apps/claude-events/src/read-payload.ts` — `readPayload(argv): Promise<string>` (file via
-  `--file`, else slurp `process.stdin`, with `process.stdin.isTTY` guard).
-- `apps/claude-events/src/run.ts` — `run(input): Promise<RunResult>` composing decode → normalize →
-  `transform` → `pushEvent` (or `--dry-run` print path).
+- `apps/claude-events/src/cli.ts` — the bin entry and **the only place a `Promise` exists**: parse
+  argv (`--file`, `--dry-run`/`--print`, `--bucket`, `--region`), then
+  `Effect.runPromiseExit(run(args).pipe(Effect.provide(AppLayer)))`, map the `Exit` → stderr log,
+  `process.exit(0)` unconditionally.
+- `apps/claude-events/src/read-payload.ts` — `readPayload(argv): Effect<string, NoInputError>`
+  (file via `--file`, else slurp `process.stdin`, with `process.stdin.isTTY` guard).
+- `apps/claude-events/src/run.ts` — `run(input): Effect<RunResult, never, S3EventRepository>`
+  composing decode → normalize → `transform` → push (or the `--dry-run` print path). **`E` is
+  `never` by construction** — every failure is folded into a `RunResult` tag, which is what makes
+  the exit-0 contract structural rather than a discipline.
 - `apps/claude-events/src/result.ts` — `RunResult` union + the `_tag` → log mapping `Record`.
 - `apps/claude-events/src/config.ts` — resolve bucket (`--bucket`|`AWE_EVENT_BUCKET`) + region.
 - `apps/claude-events/src/logger.ts` — winston default logger (`service: "claude-events"`, JSON to
@@ -186,22 +192,34 @@ Code, without standing up infrastructure and without slowing down or breaking a 
 ### Patterns to follow
 - **`readPayload`:** `--file <path>` → read the file; else if `process.stdin.isTTY` → return a typed
   "no input" outcome (don't hang); else slurp stdin via `for await`. (See AWE research snippet.)
-- **`run` (GCP composition), always-recoverable:**
+- **`run` (GCP composition), always-recoverable.** Pure steps stay `Either`; only the S3 write is an
+  `Effect`, and its typed failure is caught into a `RunResult` so `E` is `never`:
   ```ts
-  export const run = async (args: RunArgs): Promise<RunResult> => {
-    const decoded = decodeHookEvent(args.raw)           // Either
-    if (Either.isLeft(decoded)) return { _tag: "ValidationFailed", detail: decoded.left }
-    const normalized = normalize(decoded.right)
-    if (!normalized) return { _tag: "Skipped", reason: "non-consumed-event" }
-    const event = transform(claudeCodeConfig, normalized)   // integration-core
-    if (args.dryRun) return { _tag: "DryRun", event, key: buildKey(event) }
-    if (!args.bucket) return { _tag: "Misconfigured", detail: "no bucket (AWE_EVENT_BUCKET/--bucket)" }
-    const pushed = await pushEvent(args.client, args.bucket, event)
-    return pushed._tag === "Failure" ? { _tag: "WriteFailed", push: pushed } : { _tag: "Ingested", push: pushed }
-  }
+  export const run = (args: RunArgs): Effect.Effect<RunResult, never, S3EventRepository> =>
+    Effect.gen(function* () {
+      const decoded = decodeHookEvent(args.raw)              // Either — pure
+      if (Either.isLeft(decoded)) return { _tag: "ValidationFailed", detail: decoded.left } as const
+      const normalized = normalize(decoded.right)            // Option — pure
+      if (Option.isNone(normalized)) return { _tag: "Skipped", reason: "non-consumed-event" } as const
+      const event = transform(claudeCodeConfig, normalized.value)   // Either — integration-core
+      if (Either.isLeft(event)) return { _tag: "ValidationFailed", detail: event.left } as const
+      if (args.dryRun) return { _tag: "DryRun", event: event.right, key: buildKey(event.right) } as const
+      if (Option.isNone(args.bucket)) {
+        return { _tag: "Misconfigured", detail: "no bucket (AWE_EVENT_BUCKET/--bucket)" } as const
+      }
+      const repo = yield* S3EventRepository
+      return yield* repo.putEvent(args.bucket.value, event.right).pipe(
+        Effect.map(push => ({ _tag: "Ingested", push }) as const),
+        Effect.catchAll(cause => Effect.succeed({ _tag: "WriteFailed", cause } as const))
+      )
+    })
   ```
-- **`cli.ts` never throws:** wrap `run` in try/catch; map `RunResult._tag` → a winston log call via a
-  `Record`; `process.exit(0)` in a `finally`. Catch covers truly-unexpected throws and still exits 0.
+- **`cli.ts` never throws:** run the effect with `Effect.runPromiseExit`, then map the result — a
+  `Success` carries a `RunResult` whose `_tag` selects a log call via a `Record`; a `Failure` carries
+  a `Cause` (only reachable from a genuine defect, since `E` is `never`) which is logged via
+  `Cause.pretty`. `process.exit(0)` in a `finally` either way. **`runPromiseExit`, not
+  `runPromise`** — the latter rejects on defects, which would reintroduce the throw this contract
+  exists to prevent.
 - **`settings.json` recipe (README):**
   ```json
   {
