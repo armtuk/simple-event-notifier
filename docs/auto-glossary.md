@@ -56,6 +56,10 @@ architectural layers, and the planning vocabulary they rely on._
   **above** features: an area never completes, it accretes features over the system's life. Each
   feature points back to its area via `functional-area:` frontmatter.
   *Canonical:* [`system.md` → Functional areas](../.agents/plans/system.md).
+- **Future-state** — The `infra/future-state/` area holding Terraform that is deliberately deferred
+  (VPC, Lambda, API Gateway, certificates, ALB logging). Inert because Terraform loads `.tf` files
+  only from the directory it is invoked on, never recursively.
+  *Canonical:* [AWE-215](../.agents/plans/minimal-event-pipeline/terraform-future-state-quarantine.md).
 - **Handled** — A boolean flag on an event, independent of *Acknowledged*, recording that the
   underlying issue has actually been dealt with. The other half of the triage workflow.
   *Canonical:* [`system.md` → Key cross-cutting context](../.agents/plans/system.md).
@@ -64,10 +68,18 @@ architectural layers, and the planning vocabulary they rely on._
   Layers, which `.agents/object-types.md` explicitly exempts from its constructor-DI rule. Test
   doubles are alternative Layers rather than mocks.
   *Canonical:* [ADR `2026-08-03-0035-effect-as-default-idiom`](decisions/2026-08-03-0035-effect-as-default-idiom/adr-body.md).
+- **Mapping config** — Per-integration JSON that classifies events: a `rules` record keyed by
+  *Trigger*, each yielding an `eventType` + `priority` (+ optional name override), plus a
+  **required `default`** so an unmapped trigger is never silently dropped.
+  *Canonical:* [AWE-153](../.agents/plans/minimal-event-pipeline/core-layer-contracts.md).
 - **Naive client** — A consumer that reads events with nothing more than `aws s3 sync` on a cron
   plus an mtime scan. Deliberately blessed as a first-class consumption path: if the naive client
   works, the contract is simple enough.
   *Canonical:* [`README.md`](../README.md).
+- **NormalizedEvent** — The provider-agnostic intermediate a *Transformer* produces: `source`,
+  `name`, `timestamp`, *Trigger*, optional work item, and the raw payload. Deliberately carries
+  **no** `eventType` and **no** `priority` — classification is a later, separate step.
+  *Canonical:* [AWE-153](../.agents/plans/minimal-event-pipeline/core-layer-contracts.md).
 - **Notification** — One of the two `eventType` values: an **informational** event that does not
   demand action, as opposed to an *Alert*.
   *Canonical:* [`system.md` → Key cross-cutting context](../.agents/plans/system.md).
@@ -100,6 +112,10 @@ architectural layers, and the planning vocabulary they rely on._
   code in the system permitted to know a foreign shape**, which is what keeps provider vocabulary
   from leaking upward.
   *Canonical:* [ADR `2026-08-03-0028-layered-architecture`](decisions/2026-08-03-0028-layered-architecture/adr-body.md).
+- **Trigger** — The opaque string key a *NormalizedEvent* carries to select its classification rule
+  from a *Mapping config* — e.g. `"pull_request.opened"` or `"Stop"`. Unlike `source` and `name` it
+  may contain dots, since it never appears in an object key.
+  *Canonical:* [AWE-153](../.agents/plans/minimal-event-pipeline/core-layer-contracts.md).
 - **Typed error channel** — The `E` in `Effect<A, E, R>`: failures are values carried in the type
   signature as `Schema.TaggedError` subclasses, so the compiler knows every way a call can fail.
   Errors are never thrown and never collapsed into a `Promise` rejection.
