@@ -2,12 +2,13 @@
 id: claude-code-integration
 title: Claude Code Hook Integration (direct-to-S3 CLI)
 type: feature
-status: In Planning
+status: ready
 parent: none
+functional-area: event-sources
 depends-on: [github-integration]
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-29
-updated: 2026-06-29
+updated: 2026-08-02
 ---
 
 # Feature: Claude Code Hook Integration (direct-to-S3 CLI)

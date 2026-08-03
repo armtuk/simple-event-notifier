@@ -2,7 +2,7 @@
 id: AWE-150
 title: Shared event-model package
 type: story
-status: Pending
+status: ready
 parent: ./feature.md
 branch: feat/bootstrap-and-iac
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1

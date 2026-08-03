@@ -2,7 +2,7 @@
 id: AWE-151
 title: "IaC: S3 event bucket & Route53 delegated zone (Terraform)"
 type: story
-status: Pending
+status: ready
 parent: ./feature.md
 branch: feat/bootstrap-and-iac
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1

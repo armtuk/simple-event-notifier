@@ -2,7 +2,7 @@
 id: AWE-157
 title: GitHub activity poller — Events + Notifications (Railway fallback)
 type: story
-status: Pending
+status: ready
 parent: ./feature.md
 branch: github-integration
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1

@@ -2,7 +2,7 @@
 id: AWE-153
 title: Reusable integration template (integration-core)
 type: story
-status: Pending
+status: ready
 parent: ./feature.md
 branch: github-integration
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1

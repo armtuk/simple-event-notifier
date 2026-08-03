@@ -2,7 +2,7 @@
 id: AWE-154
 title: GitHub payload schemas, mapping config & normalizer
 type: story
-status: Pending
+status: ready
 parent: ./feature.md
 branch: github-integration
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1

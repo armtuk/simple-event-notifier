@@ -2,12 +2,13 @@
 id: bootstrap-and-iac
 title: Project Bootstrap & IaC Foundation
 type: feature
-status: In Planning
+status: ready
 parent: none
+functional-area: platform-foundation
 depends-on: []
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-28
-updated: 2026-06-28
+updated: 2026-08-02
 ---
 
 # Feature: Project Bootstrap & IaC Foundation

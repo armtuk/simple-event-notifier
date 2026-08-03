@@ -2,7 +2,7 @@
 id: AWE-162
 title: Publishable hook CLI (@alexrmturner/claude-events)
 type: story
-status: Pending
+status: ready
 parent: ./feature.md
 branch: feat/claude-code-integration
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1

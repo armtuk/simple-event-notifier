@@ -2,7 +2,7 @@
 id: AWE-149
 title: Monorepo & tooling bootstrap
 type: story
-status: Pending
+status: ready
 parent: ./feature.md
 branch: feat/bootstrap-and-iac
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1

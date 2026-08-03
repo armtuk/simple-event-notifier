@@ -15,7 +15,7 @@ variable "env" {
 
 variable "project_name" {
   type = string
-  default = "Simple Eventer"
+  default = "simple-eventer"
 }
 
 variable "parent_domain" {

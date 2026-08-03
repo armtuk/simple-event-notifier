@@ -37,9 +37,14 @@ resource "aws_lambda_function" "lambda" {
     }
   }
 
+  vpc_config {
+    subnet_ids         = [aws_subnet.private_1, aws_subnet.private_2]
+    security_group_ids = [aws_security_group.lambda_sg.id]
+  }
+
   layers = [aws_lambda_layer_version.dependency_layer.arn]
 
-  depends_on = [aws_cloudwatch_log_group.lambda_log_group]
+  depends_on = [aws_cloudwatch_log_group.lambda_log_group, aws_iam_role_policy_attachment.lambda_vpc_access]
 }
 
 resource "aws_lambda_permission" "lambda" {

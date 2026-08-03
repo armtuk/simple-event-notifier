@@ -2,7 +2,7 @@
 id: AWE-159
 title: Slack Socket Mode client (Railway service → S3)
 type: story
-status: Abandoned
+status: todo:abandoned
 parent: ./feature.md
 branch: feat/slack-integration
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1

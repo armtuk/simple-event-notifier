@@ -2,7 +2,7 @@
 id: AWE-160
 title: Shared S3 event writer (@personal-events/s3-push)
 type: story
-status: Pending
+status: ready
 parent: ./feature.md
 branch: feat/claude-code-integration
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1

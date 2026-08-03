@@ -2,8 +2,9 @@
 id: slack-integration
 title: Slack Integration (Socket Mode)
 type: feature
-status: Abandoned
+status: todo:abandoned
 parent: none
+functional-area: event-sources
 depends-on: [github-integration]
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-29

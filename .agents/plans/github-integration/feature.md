@@ -2,12 +2,13 @@
 id: github-integration
 title: GitHub Integration & reusable integration template
 type: feature
-status: In Planning
+status: ready
 parent: none
+functional-area: event-sources
 depends-on: [bootstrap-and-iac]
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-28
-updated: 2026-06-28
+updated: 2026-08-02
 ---
 
 # Feature: GitHub Integration & reusable integration template

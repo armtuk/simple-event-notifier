@@ -76,6 +76,19 @@ link) to drive a real triage workflow rather than just a notification stream.
   source list (email, calendar, package delivery, incident pages, Jira, Airtable, Confluence)
   is the roadmap, not the first cut.
 
+## Functional areas
+
+The durable component areas of the system. An area **never completes** — it accretes features
+over the system's life. Each feature's `functional-area:` frontmatter points back to a row here;
+the link is bidirectional and must be kept so.
+
+| Area | Features | Capability it owns |
+| :--- | :--- | :--- |
+| `platform-foundation` | `bootstrap-and-iac` | The monorepo and shared tooling, the canonical **event model** (JSON shape + object-key codec), and the AWS substrate — S3 event bucket, delegated Route53 zone, Terraform remote state. Everything else depends on this. |
+| `event-sources` | `github-integration`, `claude-code-integration`, `slack-integration` *(abandoned)* | Per-source ingestion: the reusable integration template, provider payload schemas, mapping configs, normalizers, and the deployed pathways events arrive through (webhook ingest, pollers, persistent clients). |
+| `producer-tooling` | `event-push-cli` | Local, infra-free ways to **push** events into the bucket — the CLI and shell wrapper used by cron jobs, git hooks, CI steps, and ad-hoc scripts, and the practical validation instrument for the bucket and consumers. |
+| `event-consumers` | _none yet_ | Reading the bucket and acting on it: desktop/device notifiers, the Event UI, and the acknowledge/handle triage workflow. Currently exists only as the `desktop-notifier-daemon` story inside `bootstrap-and-iac`; the Event UI is roadmap. |
+
 ## Links
 
 - PM initiative: [AWS Work Eventer (Airtable, client: Self)](https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1) — ticket prefix `AWE`

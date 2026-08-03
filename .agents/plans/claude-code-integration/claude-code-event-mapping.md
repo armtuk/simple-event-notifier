@@ -2,7 +2,7 @@
 id: AWE-161
 title: Claude Code event mapping (@personal-events/claude-code)
 type: story
-status: Pending
+status: ready
 parent: ./feature.md
 branch: feat/claude-code-integration
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
