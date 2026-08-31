@@ -1,0 +1,319 @@
+{
+  "version": 1,
+  "story": ".agents/plans/claude-code-integration/claude-code-event-mapping.md",
+  "acceptanceCriteria": [
+    {
+      "id": "AC-01",
+      "criterion": "AC-01 \u2014 A new workspace package @personal-events/claude-code builds, lints, and tests under the monorepo toolchain and depends on @personal-events/core (AWE-153 \u2014 Core layer contracts) and @personal-events/event-model (AWE-150 \u2014 Shared event-model package). It is pure: no @aws-sdk/*, no node:fs, no network, no logging side effects.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "pnpm --filter @personal-events/claude-code build && pnpm --filter @personal-events/claude-code test",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The built package and its full test suite",
+          "assertions": "Build emits dist with types; tests pass",
+          "observedResult": "not run"
+        },
+        {
+          "command": "! rg -n '@aws-sdk|node:fs|node:net|fetch\\(' packages/claude-code/src",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The complete package source",
+          "assertions": "No I/O import of any kind \u2014 the purity half of the criterion",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-02",
+      "criterion": "AC-02 \u2014 effect-Schema validators, exemplar-driven from real captured Claude Code hook payloads, for the hook envelope and the consumed events \u2014 at minimum Stop, Notification, SubagentStop, SessionStart, SessionEnd \u2014 including the common fields (session_id, transcript_path, cwd, hook_event_name). A malformed payload yields a typed Either Left carrying a readable message; an unknown hook_event_name is NOT rejected \u2014 it decodes through a permissive catch-all member and reaches the default classification.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "pnpm --filter @personal-events/claude-code test -- decode-unknown-event",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "A payload whose hook_event_name is genuinely outside the consumed set (e.g. PreToolUse) with otherwise-valid common fields",
+          "assertions": "decodeHookEvent returns Right, not Left, and the value carries the raw hook_event_name",
+          "observedResult": "not run"
+        },
+        {
+          "command": "pnpm --filter @personal-events/claude-code test -- decode-malformed",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "A genuinely malformed payload missing a required common field such as session_id",
+          "assertions": "Returns Left with a readable TreeFormatter message \u2014 the counterexample proving the schema is not simply permissive",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-03",
+      "criterion": "AC-03 \u2014 A claude-code mapping config JSON, schema-validated against core's MappingConfigSchema \u2014 { integration, rules: Record<string, Output>, default: Output }. Trigger keys are plain strings computed by the normalizer, with Notification subtypes distinguished by a composite key (Notification:permission_prompt, Notification:idle_prompt). There is no rule ordering and no most-specific-first matching \u2014 core's classify is a single Record lookup falling back to config.default, and a Record has no order. The shipped rules are: Notification:permission_prompt \u2192 alert priority 6; Notification:idle_prompt \u2192 alert priority 5; Stop \u2192 notification priority 2 (so per-turn completions do not flood the bucket); SubagentStop \u2192 notification 2; SessionStart / SessionEnd \u2192 notification 1; default \u2192 notification priority 3.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "pnpm --filter @personal-events/claude-code test -- classification-table",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "One real exemplar per shipped rule, including BOTH Notification subtypes, which are distinct composite trigger keys",
+          "assertions": "Each exemplar resolves to exactly the documented eventType and priority via a single Record lookup; the config validates against core's MappingConfigSchema (integration / rules Record / required default); no ordered rule list is used",
+          "observedResult": "not run"
+        },
+        {
+          "command": "pnpm --filter @personal-events/claude-code test -- config-schema-shape",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The shipped config JSON parsed by core's MappingConfigSchema",
+          "assertions": "rules is a flat Record keyed by plain trigger strings; default is present and required; composite keys such as Notification:permission_prompt resolve \u2014 a counterexample against reintroducing a discriminated trigger union",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-04",
+      "criterion": "AC-04 \u2014 A pure normalizer producing the NormalizedEvent shape core consumes: the composite trigger string, a human-readable name (prompt-complete, agent-waiting, \u2026), the source, an event identity for dedupe, the project derived from cwd, and a transcript reference. It takes only the field slices it needs and performs no I/O.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "pnpm --filter @personal-events/claude-code test -- normalize",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "Each consumed-event exemplar",
+          "assertions": "The composite trigger string, name, source, event identity, project from cwd and transcript reference are all extracted correctly; the function performs no I/O",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-04a",
+      "criterion": "AC-04a \u2014 Suppression and unknown-handling are distinct, and the sets are disjoint. The package distinguishes two cases that must not be conflated: - a suppressed hook event \u2014 one on an explicit, documented suppressedHookEvents list (the high-frequency PreToolUse / PostToolUse / UserPromptSubmit family) \u2014 is dropped by the normalizer and never reaches classify; - an unknown hook_event_name \u2014 anything not consumed *and* not suppressed \u2014 is emitted, reaching config.default per AC-02 and AC-03. A hook event may appear in exactly one of: the consumed set, the suppression list, or neither (unknown). A test asserts the consumed set and the suppression list do not intersect.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "pnpm --filter @personal-events/claude-code test -- suppression-vs-unknown",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "One event from the explicit suppressedHookEvents list, and one genuinely unknown hook_event_name that is NOT on that list",
+          "assertions": "The suppressed event is dropped by the normalizer and never reaches classify; the unknown event IS emitted and resolves to config.default. This is the pair that the earlier contradictory criteria made unsatisfiable",
+          "observedResult": "not run"
+        },
+        {
+          "command": "pnpm --filter @personal-events/claude-code test -- sets-disjoint",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The consumed set and the suppressedHookEvents list",
+          "assertions": "Their intersection is empty, so no hook event can be simultaneously consumed and suppressed",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-05",
+      "criterion": "AC-05 \u2014 Every name the package can emit satisfies event-model's NoDotString (/^[^.]+$/), including the default kebab derivation for an unknown hook_event_name \u2014 a hook event containing a dot must not produce an unparseable S3 key.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "pnpm --filter @personal-events/claude-code test -- name-no-dot",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "An unknown hook_event_name that CONTAINS A DOT (e.g. Custom.Thing), exercising the derived default rather than the fixed table values",
+          "assertions": "The derived name matches /^[^.]+$/ and is accepted by event-model's NoDotString schema. The fixed table values satisfy this trivially, so only the derived-default path can disprove it",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-06",
+      "criterion": "AC-06 \u2014 Changing an event's classification or priority is a JSON edit only, requiring no code change; the config schema rejects unknown shapes and out-of-range priorities.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "pnpm --filter @personal-events/claude-code test -- config-schema",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "A modified copy of the config JSON with one rule's priority changed, and a tampered copy with priority 9",
+          "assertions": "Classification changes with no source edit; the out-of-range priority is rejected by the schema",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-07",
+      "criterion": "AC-07 \u2014 Unit tests, driven by the exemplar files, cover: each consumed event decoding and mapping to its expected eventType/priority; an unknown event reaching config.default and being emitted; a suppressed event being dropped; a malformed payload producing a readable typed Left; and the normalizer's field extraction.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "pnpm --filter @personal-events/claude-code test",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The complete consumed set (7 exemplars) plus one suppressed and one unknown event",
+          "assertions": "it.each enumerates the exemplars/ directory so a missing exemplar fails the suite; the unknown event is emitted with the default; the suppressed event is dropped",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-08",
+      "criterion": "AC-08 \u2014 Guidance conformance: pure Gather\u2192Compute with no Persist, module SRP, no enums (as const / Schema.Literal), Record lookups over if/else if chains, Either results, no accumulator loops, explicit return types. Verified by biome + typecheck.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "pnpm --filter @personal-events/claude-code exec biome check src && pnpm --filter @personal-events/claude-code typecheck",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The complete package source",
+          "assertions": "biome and tsc both clean",
+          "observedResult": "not run"
+        },
+        {
+          "command": "! rg -n '\\benum\\b' packages/claude-code/src",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The package source",
+          "assertions": "No TypeScript enum \u2014 a counterexample check biome does not enforce",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    }
+  ],
+  "testInventory": {
+    "commands": [
+      {
+        "command": "pnpm --filter @personal-events/claude-code exec biome check src",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "pnpm --filter @personal-events/claude-code typecheck",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "pnpm --filter @personal-events/claude-code test",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "pnpm --filter @personal-events/claude-code build",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      }
+    ],
+    "excludedTests": [],
+    "unexpectedSkips": null
+  },
+  "thirdPartyIntegration": {
+    "required": false,
+    "tests": [],
+    "note": "Deliberately none. This package is pure; its only inputs are captured exemplar files. The end-to-end S3 path is exercised by AWE-162 \u2014 Publishable hook CLI. Exemplar capture is a local activity against the developer's own Claude Code session, not a third-party API call, so no live production test and no production-write approval applies."
+  },
+  "entryPoints": [
+    {
+      "entryPoint": "decodeHookEvent (packages/claude-code/src/decode.ts)",
+      "validated": false,
+      "command": "pnpm --filter @personal-events/claude-code test -- decode",
+      "ran": false,
+      "exitCode": null,
+      "observedResult": "not run"
+    },
+    {
+      "entryPoint": "normalize (packages/claude-code/src/normalize.ts)",
+      "validated": false,
+      "command": "pnpm --filter @personal-events/claude-code test -- normalize",
+      "ran": false,
+      "exitCode": null,
+      "observedResult": "not run"
+    },
+    {
+      "entryPoint": "claudeCodeConfig (packages/claude-code/claude-code.config.json)",
+      "validated": false,
+      "command": "pnpm --filter @personal-events/claude-code test -- config-schema",
+      "ran": false,
+      "exitCode": null,
+      "observedResult": "not run"
+    }
+  ],
+  "definitionAudit": {
+    "performed": false,
+    "auditor": "cold-main-agent",
+    "result": "blocked",
+    "counterexampleChecks": [
+      {
+        "command": "pnpm --filter @personal-events/claude-code test -- suppression-vs-unknown",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "pnpm --filter @personal-events/claude-code test -- decode-malformed",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "pnpm --filter @personal-events/claude-code test -- name-no-dot",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "! rg -n '@aws-sdk|node:fs|node:net|fetch\\(' packages/claude-code/src",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "! rg -n '\\benum\\b' packages/claude-code/src",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      }
+    ]
+  },
+  "qualityGate": {
+    "commands": [
+      {
+        "command": "pnpm --filter @personal-events/claude-code exec biome check src",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "pnpm --filter @personal-events/claude-code typecheck",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "pnpm --filter @personal-events/claude-code test",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      }
+    ]
+  }
+}

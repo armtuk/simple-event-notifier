@@ -4,7 +4,7 @@ title: Monorepo & tooling bootstrap
 type: story
 status: ready
 parent: ./feature.md
-branch: feat/bootstrap-and-iac
+branch: feature/minimal-event-pipeline
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-28
 updated: 2026-06-28
@@ -76,8 +76,9 @@ reinventing its own.
   functions by default, no enums (`as const` objects), no accumulator loops, `Record` lookups
   over `if/else` chains. These are enforced by biome — the config must encode them.
 - **Tooling** (`typescript-tools.md`, `node/preferences.md`): pnpm, turbo, tsup, biome,
-  vitest, Node ≥24, ESM, winston for logging, effect as the default lib. This story only
-  *wires* these; it does not write domain code.
+  vitest, Node ≥24, ESM, effect as the default lib — **including Effect's `Logger` for logging;
+  do not add `winston` to the workspace** (decided 2026-08-31; see the Logging row in
+  `CLAUDE.md`). This story only *wires* these; it does not write domain code.
 - **Separation of concerns** (`general.md`): shared config lives once at the root and is
   `extends`-ed; members own only their deviations. No config duplication across members.
 - This is pure scaffolding — no Gather/Compute/Persist domain logic, no CQRS surface yet.

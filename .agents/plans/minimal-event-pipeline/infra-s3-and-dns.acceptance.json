@@ -1,0 +1,349 @@
+{
+  "version": 1,
+  "story": ".agents/plans/minimal-event-pipeline/infra-s3-and-dns.md",
+  "acceptanceCriteria": [
+    {
+      "id": "AC-01",
+      "criterion": "AC-01 \u2014 Terraform provisions one S3 event bucket per environment, named events.{env}.personal-events.fifthdimensionengineering.com where {env} is the short environment name (dev or prod), with: versioning enabled, all four public-access-block flags set to true, server-side encryption AES256 (SSE-S3), and a lifecycle configuration that transitions current objects to STANDARD_IA at 90 days and GLACIER_IR at 365 days but never expires a current version.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "bash infra/scripts/verify-bucket.sh events.dev.personal-events.fifthdimensionengineering.com",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "A real applied bucket in the development environment, not a plan preview",
+          "assertions": "get-bucket-versioning Status == Enabled; all four public-access-block flags true; SSEAlgorithm == AES256; lifecycle contains transitions at 90d STANDARD_IA and 365d GLACIER_IR and contains no Expiration member on current versions",
+          "observedResult": "not run"
+        },
+        {
+          "command": "bash infra/scripts/verify-bucket.sh events.prod.personal-events.fifthdimensionengineering.com",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "A real applied bucket in the production environment",
+          "assertions": "Same property set as the development bucket; proves the per-environment scope word in the criterion",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-02",
+      "criterion": "AC-02 \u2014 A three-level delegated Route53 topology exists, mirroring the established soulofyoga.fifthdimensionengineering.com precedent: (1) a product zone personal-events.fifthdimensionengineering.com, delegated from the existing parent zone fifthdimensionengineering.com by an NS record set (TTL 300); (2) a development zone dev.personal-events.fifthdimensionengineering.com, delegated from the product zone by an NS record set (TTL 300); (3) a production zone prod.personal-events.fifthdimensionengineering.com, delegated from the product zone by an NS record set (TTL 300). No zone's auto-created apex SOA/NS record set is managed by Terraform.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "bash infra/scripts/verify-dns.sh",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "All three zones applied, with delegation records written into the parent and product zones respectively",
+          "assertions": "Each of the three zones exists; each has an NS record set at TTL 300 in its delegating parent whose values equal that zone's name_servers; no aws_route53_record of type SOA or apex NS is declared in the configuration",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-03",
+      "criterion": "AC-03 \u2014 Remote state uses the pre-existing shared state bucket terraform.tfstate.us-west-2.fifthdimensionengineering.com (region us-west-2) with encrypt = true and use_lockfile = true for native S3 locking. No DynamoDB lock table and no bootstrap module are created. State keys are fifthd-personal-events/{shared|dev|prod}/terraform.tfstate \u2014 one key per root, never shared.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "terraform -chdir=infra/environments/development init -reconfigure",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "A backend block naming the pre-existing shared bucket with use_lockfile enabled",
+          "assertions": "init succeeds against the shared bucket; the three roots resolve three distinct state keys",
+          "observedResult": "not run"
+        },
+        {
+          "command": "! rg -q 'dynamodb_table' infra/ && ! test -d infra/bootstrap",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The whole infra tree",
+          "assertions": "No DynamoDB lock table argument anywhere and no bootstrap module directory \u2014 the negative half of the criterion",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": "Supersedes the prior DynamoDB/bootstrap acceptance criterion. Approved by user 2026-08-31."
+    },
+    {
+      "id": "AC-04",
+      "criterion": "AC-04 \u2014 For every root module (shared, development, production): terraform fmt -check -recursive passes, terraform validate passes, terraform plan completes with no errors, and a second terraform plan run after terraform apply reports No changes. \u2014 i.e. zero drift, with no perpetual diff on lifecycle rules or NS record sets.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "for d in shared development production; do terraform -chdir=infra/environments/$d plan -detailed-exitcode || exit 1; done",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "A plan executed AFTER a completed apply, across the complete set of three roots",
+          "assertions": "-detailed-exitcode returns 0 (no diff) for every root; exit code 2 indicates drift and fails this criterion",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-05",
+      "criterion": "AC-05 \u2014 After apply, dig +short NS personal-events.fifthdimensionengineering.com, dig +short NS dev.personal-events.fifthdimensionengineering.com, and dig +short NS prod.personal-events.fifthdimensionengineering.com each return the nameservers of the corresponding created zone \u2014 resolved from the public DNS system, not merely present in the Route53 API.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "bash infra/scripts/verify-dns.sh",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "Resolution through the public DNS system after NS propagation, not a Route53 API listing",
+          "assertions": "dig +short NS returns a non-empty nameserver set for each of the three zones, equal to that zone's name_servers Terraform output",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-06",
+      "criterion": "AC-06 \u2014 Inputs are parameterized via variables (aws_region, aws_profile, env, project_name, parent_domain); no account id, domain, region or environment string is inlined in a resource body. Outputs expose, per environment: event bucket name and ARN, the environment zone id, and its name_servers.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "terraform -chdir=infra/environments/development output -json",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "An applied environment root",
+          "assertions": "Output JSON contains event_bucket_name, event_bucket_arn, environment_zone_id, environment_zone_name_servers",
+          "observedResult": "not run"
+        },
+        {
+          "command": "! rg -q 'fifthdimensionengineering\\.com' infra/modules/",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The module directory, where no literal domain should appear",
+          "assertions": "No hardcoded domain in any module resource body \u2014 the counterexample proving parameterization rather than mere variable existence",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-07",
+      "criterion": "AC-07 \u2014 The inherited parent_domain defect is fixed: parent_domain is fifthdimensionengineering.com and project_name is personal-events, so the zone name interpolation produces dev.personal-events.fifthdimensionengineering.com and not the currently-configured duplicated development.simple-eventer.simple-eventer.fifthdimensionengineering.com. var.env carries the short name (dev/prod) per .agents/guidance/deployment-environments/aws.md, while the environment directories retain their long names (development/, production/).",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "terraform -chdir=infra/environments/development plan -json | rg -q '\"dev\\.personal-events\\.fifthdimensionengineering\\.com\"'",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The planned zone name string, taken from plan output rather than from the variable defaults",
+          "assertions": "The exact fully-qualified name dev.personal-events.fifthdimensionengineering.com appears in the plan",
+          "observedResult": "not run"
+        },
+        {
+          "command": "! rg -q 'simple-eventer' infra/",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The whole infra tree including tfvars",
+          "assertions": "The duplicated/legacy name is entirely absent \u2014 counterexample against a fix applied in only one of the several places the string appears",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-08",
+      "criterion": "AC-08 \u2014 Failure modes, each producing a clear, actionable message rather than a crash or a silent partial apply: missing or expired AWS credentials \u2192 plan fails naming the credential problem; a parent_domain whose zone does not exist \u2192 the data \"aws_route53_zone\" lookup fails with a message naming the missing zone; a bucket name longer than 63 characters \u2192 caught by a validation block on the variable, at plan time, not by an AWS API error; re-running apply with no source change is idempotent (no resource replaced).",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "AWS_PROFILE=__nonexistent__ terraform -chdir=infra/environments/development plan",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "An genuinely unresolvable credential profile",
+          "assertions": "Non-zero exit and an error message naming the credential/profile problem",
+          "observedResult": "not run"
+        },
+        {
+          "command": "terraform -chdir=infra/environments/development plan -var 'parent_domain=does-not-exist.invalid'",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "A parent domain with no corresponding Route53 hosted zone",
+          "assertions": "Non-zero exit; the error names the missing zone rather than failing later during apply",
+          "observedResult": "not run"
+        },
+        {
+          "command": "terraform -chdir=infra/environments/development plan -var 'project_name=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "A project_name long enough to push the derived bucket name past S3's 63-character limit",
+          "assertions": "Rejected by the Terraform variable validation block at plan time, with the length named \u2014 not by an AWS API error at apply time",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-09",
+      "criterion": "AC-09 \u2014 Guidance conformance: HCL is split one-responsibility-per-file with no catch-all main.tf; every environment/account value is a variable (.agents/general.md \"Infrastructure conditionals are not domain code\"); terraform fmt is clean; any helper shell script passes shellcheck.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "terraform -chdir=infra fmt -check -recursive && shellcheck infra/scripts/*.sh",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The complete infra tree and every helper script",
+          "assertions": "fmt reports no files needing formatting; shellcheck reports zero warnings",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    }
+  ],
+  "testInventory": {
+    "commands": [
+      {
+        "command": "terraform -chdir=infra fmt -check -recursive",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "for d in shared development production; do terraform -chdir=infra/environments/$d init -backend=false && terraform -chdir=infra/environments/$d validate || exit 1; done",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "for d in shared development production; do terraform -chdir=infra/environments/$d plan -detailed-exitcode || exit 1; done",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "shellcheck infra/scripts/*.sh",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      }
+    ],
+    "excludedTests": [],
+    "unexpectedSkips": null
+  },
+  "thirdPartyIntegration": {
+    "required": true,
+    "tests": [
+      {
+        "testFile": "infra/scripts/verify-dns.sh",
+        "command": "bash infra/scripts/verify-dns.sh",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run",
+        "productionUrl": "https://route53.amazonaws.com/ (AWS account 269378281721) and the public DNS system",
+        "environment": "production",
+        "actualApiReached": false,
+        "mode": "read"
+      },
+      {
+        "testFile": "infra/scripts/verify-bucket.sh",
+        "command": "bash infra/scripts/verify-bucket.sh events.dev.personal-events.fifthdimensionengineering.com",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run",
+        "productionUrl": "https://s3.us-west-2.amazonaws.com/events.dev.personal-events.fifthdimensionengineering.com",
+        "environment": "production",
+        "actualApiReached": false,
+        "mode": "read"
+      },
+      {
+        "testFile": "infra/environments/shared + development + production (terraform apply)",
+        "command": "terraform -chdir=infra/environments/shared apply && terraform -chdir=infra/environments/development apply && terraform -chdir=infra/environments/production apply",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run",
+        "productionUrl": "https://route53.amazonaws.com/ and https://s3.us-west-2.amazonaws.com/ (AWS account 269378281721)",
+        "environment": "production",
+        "actualApiReached": false,
+        "mode": "write",
+        "productionWriteApproval": "GRANTED by the user on 2026-08-31, as specified and without modification. Scope: terraform apply against AWS account 269378281721 (us-west-2) creating (a) three Route53 public hosted zones \u2014 personal-events.fifthdimensionengineering.com plus dev. and prod. beneath it; (b) two S3 buckets, events.dev.personal-events.fifthdimensionengineering.com and events.prod.personal-events.fifthdimensionengineering.com; (c) exactly one NS record set added to the pre-existing parent zone fifthdimensionengineering.com (Z022596723T54QKGKXEYR) \u2014 the only mutation to pre-existing infrastructure; and (d) Terraform state objects under the new key prefix fifthd-personal-events/ in the pre-existing shared state bucket terraform.tfstate.us-west-2.fifthdimensionengineering.com. Both development and production were approved. Rollback: terraform destroy in reverse order, parent NS record first. Anything beyond this scope requires a fresh approval."
+      }
+    ]
+  },
+  "entryPoints": [
+    {
+      "entryPoint": "infra/environments/shared",
+      "validated": false,
+      "command": "terraform -chdir=infra/environments/shared validate && terraform -chdir=infra/environments/shared plan -detailed-exitcode",
+      "ran": false,
+      "exitCode": null,
+      "observedResult": "not run"
+    },
+    {
+      "entryPoint": "infra/environments/development",
+      "validated": false,
+      "command": "terraform -chdir=infra/environments/development validate && terraform -chdir=infra/environments/development plan -detailed-exitcode",
+      "ran": false,
+      "exitCode": null,
+      "observedResult": "not run"
+    },
+    {
+      "entryPoint": "infra/environments/production",
+      "validated": false,
+      "command": "terraform -chdir=infra/environments/production validate && terraform -chdir=infra/environments/production plan -detailed-exitcode",
+      "ran": false,
+      "exitCode": null,
+      "observedResult": "not run"
+    }
+  ],
+  "definitionAudit": {
+    "performed": false,
+    "auditor": "cold-main-agent",
+    "result": "blocked",
+    "counterexampleChecks": [
+      {
+        "command": "aws s3api get-bucket-lifecycle-configuration --bucket events.dev.personal-events.fifthdimensionengineering.com | rg -q 'Expiration' && exit 1 || exit 0",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "test -z \"$(dig +short NS staging.personal-events.fifthdimensionengineering.com)\"",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "! rg -q 'simple-eventer' infra/",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "test \"$(find infra/environments -mindepth 1 -maxdepth 1 -type d | wc -l)\" -eq 3",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      }
+    ]
+  },
+  "qualityGate": {
+    "commands": [
+      {
+        "command": "terraform -chdir=infra fmt -check -recursive",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "shellcheck infra/scripts/*.sh",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      }
+    ]
+  }
+}

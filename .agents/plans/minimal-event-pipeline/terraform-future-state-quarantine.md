@@ -8,7 +8,7 @@ pm-tool: Airtable
 branch: feature/minimal-event-pipeline
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-08-03
-updated: 2026-08-03
+updated: 2026-08-31
 ---
 
 # Story: Terraform future-state quarantine
@@ -25,10 +25,40 @@ and an API Gateway for a system that does not exist yet.
 
 ### Acceptance criteria
 
-- A future-state area exists under `infra/` holding the deferred configuration, clearly named and
-  **not referenced by any active module**.
-- The following move there: `vpc.tf`, `lambda.tf`, `cert.tf`, `apiGateway.tf` (including its webhook
-  DNS record and custom domain), and the ALB/logging portions of `network.tf` and `main.tf`.
+- A future-state area exists under `infra/` holding the **genuinely deferred** configuration,
+  clearly named and **not referenced by any active module**. Exactly **five** files are parked
+  there — the set AWE-155 — Generic webhook ingest actually restores:
+  `lambda.tf` (minus its layer and `vpc_config`), `cert.tf` (regional certificate only),
+  `apiGateway.tf`, `outputs-api.tf` (`api_base_url`, which references
+  `aws_api_gateway_deployment`) and `locals-lambda.tf` (`lambda_memory`, which AWE-155's function
+  still uses). **Nothing else is parked** — in particular there is no `network-logging.tf`,
+  `iam-lambda.tf` or `main-alb.tf`; those fragments are deleted.
+- **Dead configuration is deleted, not parked** (decided 2026-08-31). Terraform has never been
+  applied here, so there is no state to migrate and git history is the record. The following are
+  **removed outright** because the AWE-155 decisions — a Lambda that is **not** VPC-attached, and a
+  **REST API with a natively-attached WAF** — mean nothing will ever restore them:
+  - **`vpc.tf` in its entirety** — `aws_vpc`, 4× `aws_subnet`, 2× `aws_route_table`, 4×
+    associations, `aws_internet_gateway`, `aws_nat_gateway`, `aws_eip`. The NAT gateway was the
+    ~$32/month line item.
+  - `aws_security_group "lambda_sg"` and `data "aws_availability_zones"` from `network.tf` — both
+    exist only to place the Lambda in the VPC.
+  - `aws_iam_role_policy_attachment "lambda_vpc_access"` from `iam.tf` (attaches
+    `AWSLambdaVPCAccessExecutionRole`).
+  - `data "aws_elb_service_account"` from `main.tf`, and the **ALB logging bucket** with its
+    policy, ACL and ownership controls from `network.tf` — there is no ALB.
+  - `aws_lambda_layer_version "dependency_layer"` from `lambda.tf` — AWE-155 bundles every
+    dependency into the function zip via tsup `noExternal`, so the layer is a second artifact to
+    keep in sync for no benefit.
+  - `aws_acm_certificate "cert-global"` from `cert.tf` **and the `aws.us_east_1` provider alias**
+    in `provider.tf` — both existed for edge-optimized/CloudFront certificates, and AWE-155's
+    regional REST endpoint needs neither.
+  A short note in the ADR records what was deleted and why, so the removal is discoverable without
+  reading git history.
+- **The deletion is proven by a check covering every deleted resource type**, not a representative
+  sample. A grep that tests only `aws_vpc` and `aws_nat_gateway` passes while `aws_subnet`,
+  `aws_route_table`, `aws_internet_gateway`, `aws_eip`, `aws_security_group`,
+  `aws_availability_zones`, `aws_elb_service_account`, `aws_lambda_layer_version`, the logging
+  bucket or `cert-global` survive. The proof enumerates all of them.
 - **`network.tf` is split, not moved.** `aws_s3_bucket "data_bucket"` is extracted into its own
   `s3.tf` and becomes the event bucket; the logging bucket, its policy and ownership controls, the
   Lambda security group and the availability-zone lookups go to future-state.
@@ -42,8 +72,10 @@ and an API Gateway for a system that does not exist yet.
 - `terraform plan` runs to completion. It is **not** expected to be empty — it will still fail or
   show a diff for the event bucket and zone until AWE-151 completes them — but it must not fail on
   *missing references*.
-- The future-state area carries a short README stating what is parked, why, and which story restores
-  it (AWE-155, in the GitHub feature).
+- The future-state area carries a short README stating what is parked, why, and which story
+  restores it (**AWE-155 — Generic webhook ingest (API Gateway + Lambda)**). It lists **only**
+  genuinely deferred configuration — it must **not** claim that a VPC, NAT gateway or Lambda layer
+  will be restored, because the 2026-08-31 decisions ruled them out.
 - **No AWS resources are created or destroyed by this story.** It is a source-tree reorganization;
   nothing has been applied, so there is no state to migrate.
 - Guidance conformance: HCL is `terraform fmt`-clean; any helper script follows
@@ -51,25 +83,45 @@ and an API Gateway for a system that does not exist yet.
 
 ### Notes / Open questions
 
+- **Corrected 2026-08-31 after PR #3 review (CodeRabbit).** The acceptance criteria and the task
+  list disagreed: the criteria said dead VPC/ALB configuration was deleted while a later task still
+  moved those same fragments into `future-state/network-logging.tf`, and the file inventory named
+  three parked files where the tasks produce five. The deletion proof also checked only four
+  resource types, so it could pass with `aws_subnet`, `aws_eip`, `aws_security_group`,
+  `cert-global` and others still present. One disposition per resource is now stated, the inventory
+  is five files, and the proof enumerates every deleted type.
 - **This is a split-and-move, not a file move.** Five files contain a mix of keep-and-defer
   resources. Mis-splitting silently strands a resource — either leaving VPC scaffolding active in
   the minimal module, or moving something the bucket depends on.
-- **The inherited config does not currently work.** Three defects found on 2026-08-03, all of which
-  this story should fix while it is in these files anyway:
+- **The inherited config does not currently work.** Five defects — three found 2026-08-03, two more
+  measured 2026-08-31 once `terraform` was installed and actually run — all of which this story
+  should fix while it is in these files anyway:
   1. `environments/development/main.tf` sets `source = "../../module"` — the directory is
      `modules` (plural). `terraform init` cannot resolve it.
   2. The same module call omits `project_name`, which `modules/variables.tf` declares with **no
      default**, so it is a required argument.
   3. `modules/dns.tf` declares an `output "name_servers"` inside a resource file rather than in
      `outputs.tf`, and its `data` lookup **creates nothing** — it assumes the zone already exists.
-- **Open — future-state location.** `infra/modules/future-state/` already exists on disk and is
-  empty. That path sits *inside* the active module directory; Terraform only loads `.tf` files in
-  the directory it is invoked on (not recursively), so it is safe — but `infra/future-state/` is
-  less likely to mislead a reader. Confirm the choice and, if moving, remove the empty directory.
-- **Open — whether to keep `variables.tf` whole.** `aws_region`, `aws_profile`, `env`,
-  `project_name` and `parent_domain` are needed by both the minimal module and the parked
-  configuration. Duplicating them is ugly; leaving unused ones is untidy. Recommendation: keep the
-  five as-is (all are still needed) and move only genuinely Lambda/VPC-specific variables.
+  4. **`terraform validate` fails outright today** with *"Duplicate data `aws_route53_zone`
+     configuration"*: `data "aws_route53_zone" "project-zone"` is declared **twice** — at
+     `modules/dns.tf:2` and again at `modules/apiGateway.tf:62` (measured: 2026-08-31 with
+     Terraform v1.16.0). This is why validate is red *before* this story runs, and it is resolved
+     **incidentally** by moving `apiGateway.tf` to future-state. The split stays self-consistent:
+     `modules/cert.tf:45` also references that data source, and `cert.tf` moves to future-state
+     alongside `apiGateway.tf`, so the declaration and its consumers travel together while
+     `modules/` retains `dns.tf`'s own declaration.
+  5. **`terraform fmt -check -recursive` fails on 11 inherited files** (exit 3; measured
+     2026-08-31): `environments/development/{main,provider,variables}.tf` and
+     `modules/{apiGateway,cert,dns,locals,network,outputs,provider,variables}.tf`. The Level-1
+     validation gate below cannot pass until `terraform fmt -recursive` has been run, so do that
+     **first**, as its own commit, to keep the formatting churn out of the split-and-move diff.
+- **Closed — future-state lives at `infra/future-state/`**, a sibling of `modules/` and
+  `environments/`; the empty `infra/modules/future-state/` is removed. A reader scanning
+  `infra/modules/` should see only live configuration.
+- **Closed — `variables.tf` stays whole.** `aws_region`, `aws_profile`, `env`, `project_name` and
+  `parent_domain` are all needed by the reduced module; only genuinely Lambda/VPC-specific
+  variables move or are deleted. Any variable that existed solely to feed `vpc.tf` (CIDR blocks, AZ
+  counts) is deleted alongside it.
 - Terraform has **never been applied** in this repo, which is what makes this cheap — the same
   reorganization after `apply` would require `terraform state mv` for every resource.
 
@@ -126,9 +178,11 @@ and an API Gateway for a system that does not exist yet.
 
 ### Files to create / change
 
-- `infra/future-state/` — new directory holding `vpc.tf`, `lambda.tf`, `cert.tf`, `apiGateway.tf`,
-  plus new `network-logging.tf`, `iam-lambda.tf`, `main-alb.tf`, `locals-lambda.tf` and
-  `outputs-api.tf` receiving the split-out fragments.
+- `infra/future-state/` — new directory holding **exactly five** files: `lambda.tf` (minus its
+  layer and `vpc_config`), `cert.tf` (regional certificate only), `apiGateway.tf`,
+  `outputs-api.tf` (`api_base_url`) and `locals-lambda.tf` (`lambda_memory`).
+  **`vpc.tf` is deleted, not moved**, along with the ALB-logging, VPC-IAM and ALB-data fragments —
+  nothing restores them, so there is no `network-logging.tf`, `iam-lambda.tf` or `main-alb.tf`.
 - `infra/future-state/README.md` — what is parked, why, and that AWE-155 restores it.
 - `infra/modules/s3.tf` — **new**, receiving `aws_s3_bucket "data_bucket"` from `network.tf`.
 - `infra/modules/network.tf` — reduced or deleted if nothing remains after the split.
@@ -186,41 +240,65 @@ Execute in order, top to bottom. Run `terraform validate` after each move.
 
 #### CREATE `infra/future-state/` and its README
 - **IMPLEMENT**: the directory plus a README naming what is parked, why (F1 delivers only bucket +
-  DNS), and that AWE-155 restores the API Gateway/Lambda/cert set.
+  DNS), and that **AWE-155 — Generic webhook ingest** restores the API Gateway/Lambda/cert set. The
+  README must also record what was **deleted** rather than parked, so a future reader does not go
+  looking in future-state for the VPC.
 - **IMPLEMENT**: remove the empty `infra/modules/future-state/`.
 - **VALIDATE**: `test -f infra/future-state/README.md && ! test -d infra/modules/future-state`
 
-#### MOVE whole-file deferrals
-- **IMPLEMENT**: `git mv` `vpc.tf`, `lambda.tf`, `cert.tf`, `apiGateway.tf` from `infra/modules/` to
-  `infra/future-state/`.
+#### DELETE the dead configuration
+- **IMPLEMENT**: `git rm infra/modules/vpc.tf`; remove `aws_security_group "lambda_sg"` and
+  `data "aws_availability_zones"` from `network.tf`; remove
+  `aws_iam_role_policy_attachment "lambda_vpc_access"` from `iam.tf`; remove
+  `data "aws_elb_service_account"` from `main.tf`; remove `aws_lambda_layer_version` and the
+  `layers = [...]` argument from `lambda.tf`; remove `aws_acm_certificate "cert-global"` from
+  `cert.tf` and the `us_east_1` aliased provider from `provider.tf`; remove any variable that only
+  fed the VPC.
+- **GOTCHA**: `lambda.tf` also carries a `vpc_config` block referencing `aws_subnet.private_1/2`
+  and `aws_security_group.lambda_sg`. Remove it in the same pass, or the parked file will hold
+  references with no possible target.
+- **VALIDATE** (covers **every** deleted resource type, not a sample):
+  `! rg -qE 'aws_vpc|aws_subnet|aws_route_table|aws_internet_gateway|aws_nat_gateway|aws_eip|aws_security_group|aws_availability_zones|aws_elb_service_account|aws_lambda_layer_version|logging_bucket|s3_logging_bucket_policy|cert-global|us_east_1|vpc_config' infra/`
+
+#### MOVE the genuinely deferred files
+- **IMPLEMENT**: `git mv` `lambda.tf`, `cert.tf`, `apiGateway.tf` from `infra/modules/` to
+  `infra/future-state/`. **`vpc.tf` is not moved — it was deleted above.**
 - **GOTCHA**: use `git mv` so history follows the files.
 - **VALIDATE**: `cd infra/modules && terraform fmt -check` (expect reference errors at this stage —
   the next tasks resolve them)
 
-#### SPLIT `network.tf` → `s3.tf` + future-state
-- **IMPLEMENT**: move `aws_s3_bucket "data_bucket"` into a new `infra/modules/s3.tf`. Move the
-  logging bucket, its ownership controls, ACL, public-access-block, policy, the
+#### SPLIT `network.tf` → `s3.tf`, deleting the rest
+- **IMPLEMENT**: move `aws_s3_bucket "data_bucket"` into a new `infra/modules/s3.tf`. **Delete**
+  the logging bucket, its ownership controls, ACL, public-access-block and policy, the
   `s3_logging_bucket_policy` data source, `aws_security_group "lambda_sg"` and
-  `data "aws_availability_zones" "available"` into `infra/future-state/network-logging.tf`.
-- **GOTCHA**: the logging bucket policy references `aws_elb_service_account` from `main.tf` — both
-  move to future-state, so the reference stays intact *within* future-state.
+  `data "aws_availability_zones" "available"`. After this task `network.tf` holds nothing and is
+  removed.
+- **GOTCHA**: the logging bucket policy references `aws_elb_service_account` from `main.tf`.
+  Both are deleted, so the reference disappears with them — do **not** move either to future-state
+  in an attempt to keep the reference resolvable.
 - **GOTCHA**: if `data_bucket` references anything VPC/logging-related, note it and leave the
   reference for AWE-151 to resolve — do not silently rewrite the block.
 - **VALIDATE**: `cd infra/modules && terraform validate`
 
 #### SPLIT `main.tf`, `iam.tf`, `locals.tf`, `outputs.tf`
-- **IMPLEMENT**: `aws_elb_service_account` → `future-state/main-alb.tf`; all six Lambda/VPC IAM
-  blocks → `future-state/iam-lambda.tf`; `lambda_memory` → `future-state/locals-lambda.tf`;
-  `api_base_url` → `future-state/outputs-api.tf`. Keep `aws_caller_identity` and the `tags`/`name`
-  locals in `infra/modules/`.
+- **IMPLEMENT**: `api_base_url` → `future-state/outputs-api.tf`; `lambda_memory` →
+  `future-state/locals-lambda.tf` (AWE-155's Lambda still uses it). The Lambda **execution role**
+  and its policy move to future-state; the **VPC-access attachment** is deleted, not moved.
+  `aws_elb_service_account` and the ALB logging resources are deleted. Keep `aws_caller_identity`
+  and the `tags`/`name` locals in `infra/modules/`.
 - **GOTCHA**: a `locals` block cannot be split across files with the same name in the same
   directory — but future-state is a *different* directory, so a second `locals` block there is fine.
 - **VALIDATE**: `cd infra/modules && terraform validate`
 
 #### FIX the inherited defects
 - **IMPLEMENT**: correct `source` to `../../modules`; pass `project_name`; move `output
-  "name_servers"` from `dns.tf` to `outputs.tf`; populate `terraform.tfvars` with `project_name`,
-  `parent_domain`, `aws_region`, `aws_profile`, `env` for the development environment.
+  "name_servers"` from `dns.tf` to `outputs.tf`; populate `terraform.tfvars` for the development
+  environment using the values decided on 2026-08-31 — `project_name = "personal-events"`,
+  `parent_domain = "fifthdimensionengineering.com"`, `env = "dev"` (the **short** name),
+  `aws_region = "us-west-2"`, `aws_profile = "default"`. Do **not** carry over the inherited
+  `simple-eventer` defaults: `parent_domain` currently already contains the project segment, so the
+  existing values interpolate to the duplicated
+  `development.simple-eventer.simple-eventer.fifthdimensionengineering.com`. See AWE-151 AC-07.
 - **GOTCHA**: `environments/development/variables.tf` must declare `project_name` too, or the
   root-level `var.project_name` reference in `main.tf` will not resolve.
 - **VALIDATE**: `cd infra/environments/development && terraform init -backend=false && terraform validate`
@@ -229,7 +307,11 @@ Execute in order, top to bottom. Run `terraform validate` after each move.
 - **IMPLEMENT**: grep the active module for any reference to a parked resource type.
 - **VALIDATE**:
   `! rg -q 'aws_(vpc|subnet|nat_gateway|lambda_|api_gateway|acm_|security_group|elb_service_account)' infra/modules/`
-  and `cd infra/modules && terraform fmt -check && terraform validate`
+  and `cd infra/modules && terraform fmt -check && terraform validate`; plus the full deletion
+  proof
+  `! rg -qE 'aws_vpc|aws_subnet|aws_route_table|aws_internet_gateway|aws_nat_gateway|aws_eip|aws_security_group|aws_availability_zones|aws_elb_service_account|aws_lambda_layer_version|logging_bucket|s3_logging_bucket_policy|cert-global|us_east_1|vpc_config' infra/`
+  and the parked-set proof
+  `test "$(ls infra/future-state/*.tf | wc -l)" -eq 5`
 
 ### Testing strategy
 

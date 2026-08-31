@@ -139,7 +139,7 @@ Code, without standing up infrastructure and without slowing down or breaking a 
 - The **Claude Code hooks reference** (https://code.claude.com/docs/en/hooks) and the AWE-161
   research notes — Why: the `settings.json` structure, `"async": true`, `"timeout"`, matcher support
   (Notification matches `notification_type`; Stop has no matcher), and exit-code semantics.
-- `.agents/plans/bootstrap-and-iac/monorepo-bootstrap.md` — Why: workspace layout (`apps/*`), how a
+- `.agents/plans/minimal-event-pipeline/monorepo-bootstrap.md` (AWE-149) — Why: workspace layout (`apps/*`), how a
   member joins turbo, catalog versions.
 
 ### Files to create / change

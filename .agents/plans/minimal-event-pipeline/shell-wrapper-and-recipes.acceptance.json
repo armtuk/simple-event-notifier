@@ -1,0 +1,319 @@
+{
+  "version": 1,
+  "story": ".agents/plans/minimal-event-pipeline/shell-wrapper-and-recipes.md",
+  "acceptanceCriteria": [
+    {
+      "id": "AC-01",
+      "criterion": "AC-01 — A bash wrapper bin/event-push exists that resolves the built @personal-events/s3-repository CLI and execs it, forwarding all arguments and stdin verbatim, including arguments containing spaces, quotes and glob characters.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "bash bin/event-push.spec.sh args",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "Arguments that actually contain a space, a quote and a glob character — not simple tokens",
+          "assertions": "Each argument arrives at the CLI byte-identical; stdin is forwarded unchanged",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-02",
+      "criterion": "AC-02 — The wrapper contains no event logic — no key construction, no JSON assembly, no validation, no priority/type checking. Resolution and delegation only. This is the guardrail that keeps the object-key contract to a single implementation.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "! rg -nE 'alert|notification|\\.json|p[1-8]' bin/event-push",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The wrapper's own source text",
+          "assertions": "No event-type literal, no key/JSON assembly, no priority range check appears in the script",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-03",
+      "criterion": "AC-03 — Resolution follows the documented order EVENT_PUSH_HOME > symlink-resolved location of the wrapper itself. When the wrapper is reached through one or more symlinks, it resolves its own real path back to the repository checkout and locates packages/s3-repository/dist/main.js from there.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "bash bin/event-push.spec.sh symlink",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "Invocation through a symlink located in a different directory from the repo, including a chained link → link → script case",
+          "assertions": "Both single and double symlink invocations resolve and run --dry-run successfully; EVENT_PUSH_HOME takes precedence when both are available",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-04",
+      "criterion": "AC-04 — The wrapper has a #!/usr/bin/env bash shebang, runs correctly when invoked from both bash and zsh, uses only command invocations that behave identically on macOS and Linux (no GNU-only readlink -f, no realpath dependency), and passes shellcheck with zero warnings at default severity.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "shellcheck bin/event-push && ! rg -nE 'readlink -f|realpath' bin/event-push",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The wrapper source, checked for GNU-only constructs that shellcheck on Linux will not flag",
+          "assertions": "shellcheck reports zero warnings; neither readlink -f nor realpath appears",
+          "observedResult": "not run"
+        },
+        {
+          "command": "zsh -c 'bash bin/event-push --type alert --priority 1 --source t --name t --bucket x --dry-run'",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "Invocation from a zsh parent shell rather than bash",
+          "assertions": "Exit 0 under zsh as well as bash",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-05",
+      "criterion": "AC-05 — Running event-push from an arbitrary working directory (verified from at least /tmp and $HOME) works.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "bash bin/event-push.spec.sh cwd",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "Working directories outside the repo checkout — /tmp and $HOME specifically",
+          "assertions": "Exit 0 and a printed key from each directory",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-06",
+      "criterion": "AC-06 — Cron's minimal environment is an explicit, executed test case: the wrapper resolves correctly with no shell profile sourced, no nvm on $PATH, and a bare environment (env -i). The failure mode where the tool works interactively but silently fails under cron must be demonstrated absent, not merely assumed.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "bash bin/event-push.spec.sh bare-env",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "A genuinely empty environment via env -i with only a minimal PATH — no profile, no nvm, no inherited variables",
+          "assertions": "Exit 0 and a printed key both WITH EVENT_PUSH_HOME set and WITHOUT it (proving self-resolution works bare, not merely the override)",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-07",
+      "criterion": "AC-07 — A documented $PATH installation path exists — a symlink from ~/.local/bin/event-push to bin/event-push — and the wrapper still resolves correctly when invoked through that symlink (this is the case AC-03's symlink resolution exists for).",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "bash bin/event-push.spec.sh symlink && rg -q 'ln -s' README.md",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "Invocation via a symlink in a $PATH directory outside the repo",
+          "assertions": "The symlinked invocation resolves and succeeds; README documents the exact ln -s command",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-08",
+      "criterion": "AC-08 — A non-zero exit from the underlying CLI propagates unchanged through the wrapper: exit codes 2, 3 and 4 from @personal-events/s3-repository are observed unmodified by the caller.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "bash bin/event-push.spec.sh exit-codes",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "Invocations that make the underlying CLI exit 2, 3 and 4 — not ones that make the wrapper itself fail",
+          "assertions": "The observed exit code equals exactly 2, 3, 4 respectively — not merely non-zero, since collapsing all failures to 1 would destroy the branchable contract",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-09",
+      "criterion": "AC-09 — A recipes document ships containing at least these four working, copy-pasteable recipes: a crontab entry, a git post-merge (or post-commit) hook, a CI step, and a \"notify me when this long-running job finishes\" one-liner that pushes a different priority on success versus failure.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "test \"$(rg -c '^## ' docs/event-push-recipes.md)\" -ge 4",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The complete enumerated recipe set — crontab, git hook, CI step, success/failure one-liner",
+          "assertions": "All four named recipes are present as headings; the success/failure one-liner additionally executes in dry-run form proving it is valid shell rather than prose",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-10",
+      "criterion": "AC-10 — The one remaining hand-built object key in the plan tree is retrofitted. .agents/plans/local-sync-client/s3-poll-core.md (AWE-152 — S3 poll core) line ~236 currently validates by running aws s3 cp exemplars/valid-github.json s3://<bucket>/<built-key>; it is updated in this same change to use event-push. A repo-wide guard asserts no plan file, script, or doc instructs a human to construct an object key by hand.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "! rg -n 'aws s3 cp .*s3://' .agents/plans/ docs/ bin/ packages/ && rg -q 'event-push' .agents/plans/local-sync-client/s3-poll-core.md",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The complete plan/docs/bin/packages tree, not only this feature's directory",
+          "assertions": "Zero hand-built-key instructions remain anywhere; the specific retrofit target now references event-push",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": "AC-10 supersedes the stub's original criterion naming AWE-151 and AWE-152 as retrofit targets. AWE-151 was re-planned 2026-08-31 and no longer uses aws s3 cp; AWE-152 now belongs to the local-sync-client feature. Recorded 2026-08-31."
+    },
+    {
+      "id": "AC-11",
+      "criterion": "AC-11 — Failure modes produce clear messages and non-zero exits: the built CLI cannot be located (message names exactly what to build or which variable to set, and exits non-zero), and node is unavailable on $PATH (message names the missing runtime).",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "bash bin/event-push.spec.sh failure-modes",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "An unbuilt CLI path, and a PATH from which node is genuinely absent",
+          "assertions": "Non-zero exit in both cases; the unbuilt-CLI message names both 'pnpm build' and EVENT_PUSH_HOME; the missing-runtime message names node",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-12",
+      "criterion": "AC-12 — Guidance conformance per .agents/languages/shell.md, verified by shellcheck.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "shellcheck bin/event-push bin/event-push.spec.sh",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "Both shell artifacts produced by this story",
+          "assertions": "shellcheck reports zero warnings for both files",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    }
+  ],
+  "testInventory": {
+    "commands": [
+      {
+        "command": "shellcheck bin/event-push bin/event-push.spec.sh",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "bash bin/event-push.spec.sh all",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "! rg -n 'aws s3 cp .*s3://' .agents/plans/ docs/ bin/ packages/",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      }
+    ],
+    "excludedTests": [],
+    "unexpectedSkips": null
+  },
+  "thirdPartyIntegration": {
+    "required": false,
+    "tests": []
+  },
+  "entryPoints": [
+    {
+      "entryPoint": "bin/event-push invoked directly",
+      "validated": false,
+      "command": "bash bin/event-push --type alert --priority 1 --source t --name t --bucket x --dry-run",
+      "ran": false,
+      "exitCode": null,
+      "observedResult": "not run"
+    },
+    {
+      "entryPoint": "bin/event-push invoked through a $PATH symlink",
+      "validated": false,
+      "command": "bash bin/event-push.spec.sh symlink",
+      "ran": false,
+      "exitCode": null,
+      "observedResult": "not run"
+    },
+    {
+      "entryPoint": "bin/event-push invoked under a bare cron-like environment",
+      "validated": false,
+      "command": "bash bin/event-push.spec.sh bare-env",
+      "ran": false,
+      "exitCode": null,
+      "observedResult": "not run"
+    }
+  ],
+  "definitionAudit": {
+    "performed": false,
+    "auditor": "cold-main-agent",
+    "result": "blocked",
+    "counterexampleChecks": [
+      {
+        "command": "! rg -nE 'readlink -f|realpath' bin/event-push",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "! rg -nE 'alert|notification|\\.json|p[1-8]' bin/event-push",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "env -i PATH=/usr/bin:/bin bash bin/event-push --type alert --priority 1 --source t --name t --bucket x --dry-run",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "! rg -n 'nvm|source .*profile|\\. .*bashrc' bin/event-push",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      }
+    ]
+  },
+  "qualityGate": {
+    "commands": [
+      {
+        "command": "shellcheck bin/event-push bin/event-push.spec.sh",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "bash bin/event-push.spec.sh all",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      }
+    ]
+  }
+}

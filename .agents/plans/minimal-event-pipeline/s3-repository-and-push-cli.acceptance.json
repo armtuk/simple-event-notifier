@@ -1,0 +1,346 @@
+{
+  "version": 1,
+  "story": ".agents/plans/minimal-event-pipeline/s3-repository-and-push-cli.md",
+  "acceptanceCriteria": [
+    {
+      "id": "AC-01",
+      "criterion": "AC-01 \u2014 A workspace package @personal-events/s3-repository (at packages/s3-repository/) exposes a bin entry point named event-push that accepts: --type (alert | notification, required), --priority (integer 1\u20138, required), --source (required), --name (required), --payload <path|-> (optional; - reads stdin), --work-item <url> (optional), --bucket <name> (optional), --timestamp <iso> (optional), and --dry-run (optional).",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "node packages/s3-repository/dist/main.js --type alert --priority 5 --source cron --name backup-failed --bucket x --dry-run",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The built bin invoked with the full documented flag set",
+          "assertions": "Exit 0; every listed flag is accepted; the resolved key is printed",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": "Package name @personal-events/s3-repository with bin event-push approved by user 2026-08-31, superseding the prior @personal-events/event-push wording."
+    },
+    {
+      "id": "AC-02",
+      "criterion": "AC-02 \u2014 The package provides the live implementation of the EventRepository Context.Tag defined by @personal-events/core (AWE-153), as an Effect Layer. Its put returns Effect<PutOutcome, EventWriteError> exactly as the contract declares. The CLI is a consumer of that layer, not a parallel code path \u2014 AWE-155 and AWE-162 obtain the identical put by providing the same layer.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "pnpm --filter @personal-events/s3-repository typecheck",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The Layer typed against core's exported Context.Tag rather than a locally redeclared interface",
+          "assertions": "S3EventRepositoryLayer type-checks as Layer<EventRepository>; put's signature is Effect<PutOutcome, EventWriteError>",
+          "observedResult": "not run"
+        },
+        {
+          "command": "rg -q 'from \"@personal-events/core\"' packages/s3-repository/src/repository.ts",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The repository module's imports",
+          "assertions": "The tag is imported from core, not redefined locally \u2014 counterexample against a parallel contract",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-03",
+      "criterion": "AC-03 \u2014 The assembled event validates against the @personal-events/event-model schema before any network call is attempted, with acknowledged and handled defaulting to false. A validation failure performs zero S3 requests.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "pnpm --filter @personal-events/s3-repository test -- validate-before-network",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "An invalid event combined with a bucket value that would fail loudly if contacted",
+          "assertions": "Exit 2 with a validation message; the injected S3 client's call count is exactly 0; acknowledged and handled default to false on the valid path",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-04",
+      "criterion": "AC-04 \u2014 The object key is produced exclusively by the event-model codec (buildKey). No key string is assembled anywhere in this package, and the field schemas Priority, NoDotString and IsoInstant are imported from event-model, never re-declared.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "! rg -n 'Schema.between\\(1, *8\\)|\\^\\[\\^.\\]\\+\\$' packages/s3-repository/src",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The package source, searched for re-declared field-schema bounds",
+          "assertions": "Neither the 1\u20138 priority bound nor the no-dot pattern is re-declared \u2014 the specific contract-forking failure the feature calls out",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-05",
+      "criterion": "AC-05 \u2014 Round-trip parity is proven by test: for a matrix of inputs \u2014 including source and name values containing dots, and boundary priorities 1 and 8 \u2014 the key produced by buildKey parses back through parseKey to identical components.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "pnpm --filter @personal-events/s3-repository test -- key-round-trip",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "Inputs actually carrying dots in source/name and the boundary priorities 1 and 8, not mid-range values",
+          "assertions": "parseKey(buildKey(e)) deep-equals the original components for every matrix row; a wrong-segment-count key yields a typed failure",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-06",
+      "criterion": "AC-06 \u2014 The write uses the AWS SDK v3 default credential chain (no hardcoded profile) and is isolated in a single put-event.ts module, so the persist boundary can be swapped in one file.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "! rg -n '@aws-sdk' packages/s3-repository/src --glob '!put-event.ts' --glob '!*.spec.ts'",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "Every source file except the designated persist module",
+          "assertions": "No AWS SDK import outside put-event.ts; no hardcoded credentials or profile literal anywhere",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-07",
+      "criterion": "AC-07 \u2014 Same-key re-push is a no-op, not an overwrite and not a crash. The write is a conditional put (IfNoneMatch: \"*\"); an existing key yields PutOutcome { _tag: \"AlreadyExists\" } and the CLI exits 0 reporting that no write occurred. This preserves the append-only history guarantee in system.md \u2014 an event already recorded is never silently replaced.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "bash packages/s3-repository/scripts/live-idempotency.sh",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The identical event pushed twice against a real S3 bucket",
+          "assertions": "First push reports Created and exits 0; second reports AlreadyExists and exits 0; the object's LastModified and ETag are unchanged between the two",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-08",
+      "criterion": "AC-08 \u2014 --dry-run prints the resolved key and the full event body to stdout, performs zero network calls, and exits 0.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "pnpm --filter @personal-events/s3-repository test -- dry-run",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "A dry-run invocation with an unreachable bucket name",
+          "assertions": "Exit 0; stdout contains both the key and the full event body; no S3Client is constructed and zero requests are issued",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-09",
+      "criterion": "AC-09 \u2014 Bucket identity resolves in the documented precedence order --bucket > EVENT_BUCKET environment variable, and when resolution fails the error names both sources that were tried.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "pnpm --filter @personal-events/s3-repository test -- bucket-precedence",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "Both --bucket and EVENT_BUCKET set to different values, and a case with neither set",
+          "assertions": "--bucket wins when both present; with neither, the error text names both --bucket and EVENT_BUCKET",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-10",
+      "criterion": "AC-10 \u2014 Failure modes \u2014 each produces a specific, actionable stderr message and a documented NON-ZERO exit code, distinct enough for a script to branch on usage errors versus write failures: --type not one of alert/notification; --priority non-integer or outside 1\u20138; any required flag missing \u2192 exit 2 (usage); --payload path missing, unreadable, or malformed JSON; - requested but stdin empty or invalid JSON; --timestamp not a valid ISO instant \u2192 exit 2 (usage); AWS credentials missing, expired, or lacking s3:PutObject \u2192 exit 3; bucket does not exist, is unreachable, or returns access-denied \u2192 exit 4; bucket identity unresolvable \u2192 exit 2. Exit codes are documented in the package README.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "pnpm --filter @personal-events/s3-repository test -- failure-modes",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The complete enumerated set of 13 failure cases, each with the property that triggers its specific mode",
+          "assertions": "Each case exits with its exact documented code (2/3/4) and emits a message naming the specific problem; a guard asserts the table length equals 13 so the inventory cannot silently shrink",
+          "observedResult": "not run"
+        },
+        {
+          "command": "rg -q 'exit' packages/s3-repository/README.md",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The package README",
+          "assertions": "The exit-code table is documented as the criterion requires",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-11",
+      "criterion": "AC-11 \u2014 Guidance conformance: G-C-P separation (argv/stdin/env gather \u2192 pure buildEvent + key compute \u2192 putEvent persist), module SRP, Either for pure fallible code and Effect for effectful code per CLAUDE.md, no enums, no accumulator loops, Record lookups over if/else if chains. Verified by biome + typecheck.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "pnpm --filter @personal-events/s3-repository exec biome check src && pnpm --filter @personal-events/s3-repository typecheck",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The complete package source",
+          "assertions": "biome and tsc both clean",
+          "observedResult": "not run"
+        },
+        {
+          "command": "! rg -n '\\benum\\b' packages/s3-repository/src",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The package source",
+          "assertions": "No TypeScript enum is used \u2014 a counterexample check biome alone does not enforce",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    }
+  ],
+  "testInventory": {
+    "commands": [
+      {
+        "command": "pnpm --filter @personal-events/s3-repository exec biome check src",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "pnpm --filter @personal-events/s3-repository typecheck",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "pnpm --filter @personal-events/s3-repository test",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "shellcheck packages/s3-repository/scripts/*.sh",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      }
+    ],
+    "excludedTests": [],
+    "unexpectedSkips": null
+  },
+  "thirdPartyIntegration": {
+    "required": true,
+    "tests": [
+      {
+        "testFile": "packages/s3-repository/scripts/live-idempotency.sh",
+        "command": "bash packages/s3-repository/scripts/live-idempotency.sh",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run",
+        "productionUrl": "https://events.dev.personal-events.fifthdimensionengineering.com.s3.us-west-2.amazonaws.com",
+        "environment": "production",
+        "actualApiReached": false,
+        "mode": "write",
+        "productionWriteApproval": "GRANTED by the user on 2026-08-31, as specified and without modification. Scope: push the same canonical event twice to a single object key (source=selftest, name=acceptance-probe, priority 1, ~200 bytes) in events.dev.personal-events.fifthdimensionengineering.com to prove the conditional put returns AlreadyExists without overwriting, then delete the probe object so the net effect is zero. No other object may be read, modified, or removed. Anything beyond this scope requires a fresh approval."
+      },
+      {
+        "testFile": "packages/s3-repository/scripts/live-idempotency.sh (read-only preflight)",
+        "command": "aws s3api head-bucket --bucket events.dev.personal-events.fifthdimensionengineering.com",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run",
+        "productionUrl": "https://events.dev.personal-events.fifthdimensionengineering.com.s3.us-west-2.amazonaws.com",
+        "environment": "production",
+        "actualApiReached": false,
+        "mode": "read"
+      }
+    ]
+  },
+  "entryPoints": [
+    {
+      "entryPoint": "bin: event-push (packages/s3-repository/dist/main.js)",
+      "validated": false,
+      "command": "node packages/s3-repository/dist/main.js --type alert --priority 5 --source cron --name backup-failed --bucket x --dry-run",
+      "ran": false,
+      "exitCode": null,
+      "observedResult": "not run"
+    },
+    {
+      "entryPoint": "library export: S3EventRepositoryLayer",
+      "validated": false,
+      "command": "pnpm --filter @personal-events/s3-repository typecheck",
+      "ran": false,
+      "exitCode": null,
+      "observedResult": "not run"
+    }
+  ],
+  "definitionAudit": {
+    "performed": false,
+    "auditor": "cold-main-agent",
+    "result": "blocked",
+    "counterexampleChecks": [
+      {
+        "command": "pnpm --filter @personal-events/s3-repository test -- validate-before-network",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "! rg -n 'Schema.between\\(1, *8\\)' packages/s3-repository/src",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "! rg -n '@aws-sdk' packages/s3-repository/src --glob '!put-event.ts' --glob '!*.spec.ts'",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "! rg -n '\\benum\\b' packages/s3-repository/src",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      }
+    ]
+  },
+  "qualityGate": {
+    "commands": [
+      {
+        "command": "pnpm --filter @personal-events/s3-repository exec biome check src",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "pnpm --filter @personal-events/s3-repository typecheck",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "pnpm --filter @personal-events/s3-repository test",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      }
+    ]
+  }
+}
