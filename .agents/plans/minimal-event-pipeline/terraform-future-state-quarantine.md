@@ -8,7 +8,7 @@ pm-tool: Airtable
 branch: feature/minimal-event-pipeline
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-08-03
-updated: 2026-08-03
+updated: 2026-08-31
 ---
 
 # Story: Terraform future-state quarantine
@@ -54,14 +54,28 @@ and an API Gateway for a system that does not exist yet.
 - **This is a split-and-move, not a file move.** Five files contain a mix of keep-and-defer
   resources. Mis-splitting silently strands a resource — either leaving VPC scaffolding active in
   the minimal module, or moving something the bucket depends on.
-- **The inherited config does not currently work.** Three defects found on 2026-08-03, all of which
-  this story should fix while it is in these files anyway:
+- **The inherited config does not currently work.** Five defects — three found 2026-08-03, two more
+  measured 2026-08-31 once `terraform` was installed and actually run — all of which this story
+  should fix while it is in these files anyway:
   1. `environments/development/main.tf` sets `source = "../../module"` — the directory is
      `modules` (plural). `terraform init` cannot resolve it.
   2. The same module call omits `project_name`, which `modules/variables.tf` declares with **no
      default**, so it is a required argument.
   3. `modules/dns.tf` declares an `output "name_servers"` inside a resource file rather than in
      `outputs.tf`, and its `data` lookup **creates nothing** — it assumes the zone already exists.
+  4. **`terraform validate` fails outright today** with *"Duplicate data `aws_route53_zone`
+     configuration"*: `data "aws_route53_zone" "project-zone"` is declared **twice** — at
+     `modules/dns.tf:2` and again at `modules/apiGateway.tf:62` (measured: 2026-08-31 with
+     Terraform v1.16.0). This is why validate is red *before* this story runs, and it is resolved
+     **incidentally** by moving `apiGateway.tf` to future-state. The split stays self-consistent:
+     `modules/cert.tf:45` also references that data source, and `cert.tf` moves to future-state
+     alongside `apiGateway.tf`, so the declaration and its consumers travel together while
+     `modules/` retains `dns.tf`'s own declaration.
+  5. **`terraform fmt -check -recursive` fails on 11 inherited files** (exit 3; measured
+     2026-08-31): `environments/development/{main,provider,variables}.tf` and
+     `modules/{apiGateway,cert,dns,locals,network,outputs,provider,variables}.tf`. The Level-1
+     validation gate below cannot pass until `terraform fmt -recursive` has been run, so do that
+     **first**, as its own commit, to keep the formatting churn out of the split-and-move diff.
 - **Open — future-state location.** `infra/modules/future-state/` already exists on disk and is
   empty. That path sits *inside* the active module directory; Terraform only loads `.tf` files in
   the directory it is invoked on (not recursively), so it is safe — but `infra/future-state/` is
@@ -219,8 +233,13 @@ Execute in order, top to bottom. Run `terraform validate` after each move.
 
 #### FIX the inherited defects
 - **IMPLEMENT**: correct `source` to `../../modules`; pass `project_name`; move `output
-  "name_servers"` from `dns.tf` to `outputs.tf`; populate `terraform.tfvars` with `project_name`,
-  `parent_domain`, `aws_region`, `aws_profile`, `env` for the development environment.
+  "name_servers"` from `dns.tf` to `outputs.tf`; populate `terraform.tfvars` for the development
+  environment using the values decided on 2026-08-31 — `project_name = "personal-events"`,
+  `parent_domain = "fifthdimensionengineering.com"`, `env = "dev"` (the **short** name),
+  `aws_region = "us-west-2"`, `aws_profile = "default"`. Do **not** carry over the inherited
+  `simple-eventer` defaults: `parent_domain` currently already contains the project segment, so the
+  existing values interpolate to the duplicated
+  `development.simple-eventer.simple-eventer.fifthdimensionengineering.com`. See AWE-151 AC-07.
 - **GOTCHA**: `environments/development/variables.tf` must declare `project_name` too, or the
   root-level `var.project_name` reference in `main.tf` will not resolve.
 - **VALIDATE**: `cd infra/environments/development && terraform init -backend=false && terraform validate`

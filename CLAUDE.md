@@ -25,6 +25,7 @@ duplicate it.
 | Async / effects | **`Effect<A, E, R>`** for anything effectful; errors in the typed error channel as `Schema.TaggedError` |
 | Pure fallible / partial | `Either<A, E>` / `Option<A>` — do **not** wrap pure code in `Effect` |
 | Raw `Promise` | **Only** at the outermost process boundary (Lambda `handler`, CLI `main`), via `Effect.runPromise` |
+| Logging | **Effect's `Logger` — no winston.** `Effect.log*` at call sites; serialization lives in a custom `Logger` installed with `Logger.replace`. The **format** rules in `.agents/guidance/logging.md` are unchanged and still binding — JSONL to the shipped stream with `level`, `env`, `timestamp` (ms), `service` and any request id; a readable line to a TTY. Only the library differs: that guidance's worked example is written in winston because it predates the Effect ADR. |
 | Monorepo | pnpm workspaces + turbo |
 | Lint / format | biome |
 | Test | vitest (+ `@effect/vitest`); fixtures over mocks per `.agents/tests.md` |

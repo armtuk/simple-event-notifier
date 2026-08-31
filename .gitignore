@@ -21,3 +21,6 @@ build/
 .turbo/
 
 .codex
+.agents/bin
+.agents/omf
+.agents/templates

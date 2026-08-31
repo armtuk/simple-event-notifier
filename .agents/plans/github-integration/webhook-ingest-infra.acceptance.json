@@ -1,0 +1,410 @@
+{
+  "version": 1,
+  "story": ".agents/plans/github-integration/webhook-ingest-infra.md",
+  "acceptanceCriteria": [
+    {
+      "id": "AC-01",
+      "criterion": "AC-01 \u2014 Terraform provisions, per environment, an API Gateway HTTP API (payload format 2.0) integrated with a Lambda (nodejs24.x, not VPC-attached) whose IAM role grants only s3:PutObject on the event bucket ARN and ssm:GetParameter + kms:Decrypt on the webhook-secret parameter. No wildcard resource ARNs.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "terraform -chdir=infra/environments/development plan -json | rg -q '\"nodejs24.x\"'",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "A planned Lambda in each environment root",
+          "assertions": "Runtime is nodejs24.x; no vpc_config block is present",
+          "observedResult": "not run"
+        },
+        {
+          "command": "! rg -n 'Resource\\s*=\\s*\"\\*\"' infra/modules/",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "Every IAM policy document in the module",
+          "assertions": "No wildcard resource ARN anywhere \u2014 the negative half of least-privilege",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-02",
+      "criterion": "AC-02 \u2014 The endpoint is fronted by a CloudFront distribution with an AWS WAF Web ACL attached (Web ACL created in us-east-1 with scope = \"CLOUDFRONT\"), carrying the aws.md managed rule set \u2014 AWSManagedRulesCommonRuleSet, AWSManagedRulesKnownBadInputsRuleSet, AWSManagedRulesAmazonIpReputationList \u2014 plus an explicit rate-limit rule. WAF logging is enabled to an S3 log destination with a 60-day expiry per aws.md.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "bash infra/scripts/verify-ingest-waf.sh",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "A deployed CloudFront distribution with the Web ACL associated, receiving real requests",
+          "assertions": "All four rules present via get-web-acl; a probe request matching a managed rule returns 403; a benign request is NOT blocked; the WAF log bucket receives a record and carries a 60-day expiry rule",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-03",
+      "criterion": "AC-03 \u2014 The origin cannot be reached around the WAF. CloudFront injects a secret origin-verify header (value from SSM, never in Terraform state as plaintext); the Lambda rejects any request lacking the correct value with 403 before doing any other work. A direct POST to the raw https://{api-id}.execute-api.{region}.amazonaws.com/... URL therefore returns 403, not 404 or 200.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "bash infra/scripts/verify-ingest-origin.sh",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "A request sent to the raw execute-api URL, bypassing CloudFront entirely \u2014 not a CloudFront request with the header stripped",
+          "assertions": "Raw execute-api POST returns 403; the same path through CloudFront returns 404 (unregistered), proving the 403 originates from the origin check rather than the path being unroutable; logs record the rejection without echoing either secret value",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-04",
+      "criterion": "AC-04 \u2014 A per-environment custom hostname resolves and serves the endpoint: hooks.dev.personal-events.fifthdimensionengineering.com and hooks.prod.personal-events.fifthdimensionengineering.com, each backed by an ACM certificate in us-east-1 (CloudFront's requirement) validated by DNS records in that environment's own zone from AWE-151, with the alias A/AAAA record in the same zone.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "dig +short hooks.dev.personal-events.fifthdimensionengineering.com && curl -sS -o /dev/null -w '%{http_code}' https://hooks.dev.personal-events.fifthdimensionengineering.com/nope",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "Public DNS resolution and a real TLS handshake, not a Route53 API listing",
+          "assertions": "The hostname resolves to the CloudFront distribution; HTTPS completes with a valid certificate; the unregistered path returns 404",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-05",
+      "criterion": "AC-05 \u2014 A generic Lambda handler routes a request to a registered integration by path (e.g. /github), hands it the raw request (headers + raw body), and maps its outcome to an HTTP status. The handler is integration-agnostic: it contains no provider names, no signature verification, and no classification. This story ships the registry empty, so every POST to an unregistered path returns 404; GitHub registers itself in AWE-156.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "pnpm --filter @personal-events/webhook-ingest test -- handler",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "A stub WebhookIntegration returning each WebhookOutcome variant, plus an unregistered path",
+          "assertions": "Each outcome maps to its documented status; an unregistered path returns 404",
+          "observedResult": "not run"
+        },
+        {
+          "command": "! rg -in 'github|hmac|signature|x-hub' apps/webhook-ingest/src",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The handler app source",
+          "assertions": "No provider name or signature vocabulary appears \u2014 the integration-agnostic half of the criterion",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-06",
+      "criterion": "AC-06 \u2014 Persistence goes through the single existing Repository. The handler and its integrations obtain put from the EventRepository Context.Tag (@personal-events/core, AWE-153), provided by the S3EventRepositoryLayer from @personal-events/s3-repository (AWE-213). No new S3 write path, no new event-writing package, and no direct @aws-sdk/client-s3 use outside that layer.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "! rg -n '@aws-sdk/client-s3' apps/webhook-ingest/src && ! test -d packages/event-sink",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The whole ingest app and the packages directory",
+          "assertions": "No S3 SDK import in the app; no event-sink package exists \u2014 the static half",
+          "observedResult": "not run"
+        },
+        {
+          "command": "pnpm --filter @personal-events/webhook-ingest test -- persist-through-tag",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "A handler test providing a capturing EventRepository layer",
+          "assertions": "put/putAll is invoked through the tag \u2014 the behavioural half, which the static check alone cannot establish",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-07",
+      "criterion": "AC-07 \u2014 Raw body integrity is preserved. The handler passes the exact request bytes through to the integration (base64-decoded only when isBase64Encoded is true), never JSON-parsing and re-serialising first, because AWE-156's HMAC signs the exact bytes. A test asserts a body with unusual-but-valid whitespace and Unicode survives byte-identical.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "pnpm --filter @personal-events/webhook-ingest test -- raw-body-integrity",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "A body containing significant whitespace, a trailing newline, multi-byte UTF-8, and key ordering that a re-serialisation round-trip would alter",
+          "assertions": "The bytes the stub integration receives are identical to the bytes sent, for both base64 and plain encodings",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-08",
+      "criterion": "AC-08 \u2014 Effect throughout: every effectful function returns Effect; pure fallible helpers return Either; a raw Promise appears only in the exported Lambda handler, via Effect.runPromise (per CLAUDE.md).",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "! rg -n 'Promise<' apps/webhook-ingest/src --glob '!handler.ts' --glob '!*.spec.ts'",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "Every source module except the handler export",
+          "assertions": "No Promise-typed signature outside handler.ts",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-09",
+      "criterion": "AC-09 \u2014 Logging is Effect's Logger, not winston. Every record carries level, env, timestamp (ms), service (webhook-ingest) and the request id from event.requestContext.requestId, emitted as JSONL to the CloudWatch stream per .agents/guidance/logging.md. The webhook secret and the origin-verify value are never logged, at any level.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "pnpm --filter @personal-events/webhook-ingest test -- no-secret-logging",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "A sentinel secret value injected, exercised across every failure path in the AC-11 inventory",
+          "assertions": "The captured log output contains the sentinel zero times; every emitted record is valid JSON carrying level, env, timestamp with ms, service and requestId",
+          "observedResult": "not run"
+        },
+        {
+          "command": "! rg -n 'winston' apps/webhook-ingest",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The whole ingest app including package.json",
+          "assertions": "winston is absent entirely",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-10",
+      "criterion": "AC-10 \u2014 terraform fmt -check, validate and plan are clean for every environment root, and a second plan after apply reports no drift \u2014 including no perpetual diff on the CloudFront distribution or the WAF Web ACL.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "for d in development production; do terraform -chdir=infra/environments/$d plan -detailed-exitcode || exit 1; done",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "A plan executed AFTER a completed apply, across the complete set of environment roots",
+          "assertions": "-detailed-exitcode returns 0 for every root; exit code 2 means drift and fails this criterion",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-11",
+      "criterion": "AC-11 \u2014 Failure modes, each logged with the offending value and mapped to the right status: unroutable path \u2192 404; missing/incorrect origin-verify header \u2192 403; malformed request body \u2192 400; S3 write failure \u2192 5xx (so the sender can redeliver \u2014 GitHub does not auto-retry, making this load-bearing); missing SSM parameter \u2192 5xx with a message naming the parameter; IAM denial \u2192 5xx with the denied action and resource named.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "pnpm --filter @personal-events/webhook-ingest test -- failure-modes",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The complete enumerated set of 7 failure cases, each carrying the property that triggers its specific mode",
+          "assertions": "Each case returns its exact documented status and logs the offending value; a guard asserts the table length equals 7 so the inventory cannot silently shrink",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-12",
+      "criterion": "AC-12 \u2014 Guidance conformance: G-C-P separation across distinct modules, Repository pattern (no SDK above the boundary), Record lookups rather than if/else if on a discriminator, no accumulator loops, no enums, explicit return types. Verified by biome + typecheck.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "pnpm --filter @personal-events/webhook-ingest exec biome check src && pnpm --filter @personal-events/webhook-ingest typecheck",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The complete app source",
+          "assertions": "biome and tsc both clean",
+          "observedResult": "not run"
+        },
+        {
+          "command": "! rg -n '\\benum\\b' apps/webhook-ingest/src",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The app source",
+          "assertions": "No TypeScript enum \u2014 a counterexample check biome does not enforce",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    }
+  ],
+  "testInventory": {
+    "commands": [
+      {
+        "command": "pnpm --filter @personal-events/webhook-ingest exec biome check src",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "pnpm --filter @personal-events/webhook-ingest typecheck",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "pnpm --filter @personal-events/webhook-ingest test",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "terraform -chdir=infra fmt -check -recursive",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "shellcheck infra/scripts/verify-ingest-*.sh",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      }
+    ],
+    "excludedTests": [],
+    "unexpectedSkips": null
+  },
+  "thirdPartyIntegration": {
+    "required": true,
+    "tests": [
+      {
+        "testFile": "infra/scripts/verify-ingest-origin.sh",
+        "command": "bash infra/scripts/verify-ingest-origin.sh",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run",
+        "productionUrl": "https://hooks.dev.personal-events.fifthdimensionengineering.com",
+        "environment": "production",
+        "actualApiReached": false,
+        "mode": "read"
+      },
+      {
+        "testFile": "infra/scripts/verify-ingest-waf.sh",
+        "command": "bash infra/scripts/verify-ingest-waf.sh",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run",
+        "productionUrl": "https://hooks.dev.personal-events.fifthdimensionengineering.com",
+        "environment": "production",
+        "actualApiReached": false,
+        "mode": "read"
+      },
+      {
+        "testFile": "infra/environments/{development,production} (terraform apply)",
+        "command": "terraform -chdir=infra/environments/development apply",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run",
+        "productionUrl": "https://cloudfront.amazonaws.com/ and https://apigateway.us-west-2.amazonaws.com/ (AWS account 269378281721)",
+        "environment": "production",
+        "actualApiReached": false,
+        "mode": "write",
+        "productionWriteApproval": "REQUIRED AND NOT YET GRANTED. Distinct from the AWE-151/AWE-213 approvals granted 2026-08-31, which covered only minimal-event-pipeline resources. Ask at the start of github-integration execution: 'May I run terraform apply against account 269378281721 to create, per environment: an API Gateway HTTP API, a Lambda and its IAM role, a CloudFront distribution, a us-east-1 ACM certificate (with DNS-validation records in the AWE-151 environment zone), a WAF Web ACL with four rules, an SSM parameter holding the origin-verify secret, and a WAF log bucket? This creates a publicly reachable internet endpoint and adds roughly $10/month per environment in WAF charges. Rollback is terraform destroy; CloudFront distributions take 15-20 minutes to disable and delete.'"
+      }
+    ]
+  },
+  "entryPoints": [
+    {
+      "entryPoint": "Lambda handler export (apps/webhook-ingest/dist/handler.js)",
+      "validated": false,
+      "command": "pnpm --filter @personal-events/webhook-ingest test -- handler",
+      "ran": false,
+      "exitCode": null,
+      "observedResult": "not run"
+    },
+    {
+      "entryPoint": "Public HTTPS endpoint via CloudFront (development)",
+      "validated": false,
+      "command": "bash infra/scripts/verify-ingest-origin.sh",
+      "ran": false,
+      "exitCode": null,
+      "observedResult": "not run"
+    },
+    {
+      "entryPoint": "Raw execute-api origin URL (must be unusable)",
+      "validated": false,
+      "command": "bash infra/scripts/verify-ingest-origin.sh",
+      "ran": false,
+      "exitCode": null,
+      "observedResult": "not run"
+    }
+  ],
+  "definitionAudit": {
+    "performed": false,
+    "auditor": "cold-main-agent",
+    "result": "blocked",
+    "counterexampleChecks": [
+      {
+        "command": "! rg -n '@aws-sdk/client-s3' apps/webhook-ingest/src && ! test -d packages/event-sink",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "! rg -n 'winston' apps/webhook-ingest",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "! rg -n 'Promise<' apps/webhook-ingest/src --glob '!handler.ts' --glob '!*.spec.ts'",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "! rg -in 'github|hmac|signature' apps/webhook-ingest/src",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "! rg -n 'Resource\\s*=\\s*\"\\*\"' infra/modules/",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      }
+    ]
+  },
+  "qualityGate": {
+    "commands": [
+      {
+        "command": "pnpm --filter @personal-events/webhook-ingest exec biome check src",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "pnpm --filter @personal-events/webhook-ingest typecheck",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
+      {
+        "command": "terraform -chdir=infra fmt -check -recursive",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      }
+    ]
+  }
+}

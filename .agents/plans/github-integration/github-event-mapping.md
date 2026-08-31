@@ -119,8 +119,10 @@ From `.agents/general.md`, `.agents/languages/typescript/*`, `.agents/frameworks
   `matchKey` must equal the config rule's `matchKey`.**
 - `packages/event-model/src/event.ts` (from AWE-150) — Why: `NoDotString`, `IsoInstant`,
   `Priority` field-schema shapes and the no-dot rule (`/^[^.]+$/`) the normalizer must satisfy.
-- `.agents/plans/github-integration/integration-framework.md` (this feature) — Why: the
-  `channel`/`name`/`NormalizedEvent` decisions and the `OutputSchema` (incl. optional `name`).
+- `.agents/plans/minimal-event-pipeline/core-layer-contracts.md` (AWE-153 — Core layer contracts)
+  — Why: the `channel`/`name`/`NormalizedEvent` decisions and the `OutputSchema` (incl. optional
+  `name`). **Note:** AWE-153 moved out of this feature into `minimal-event-pipeline` on 2026-08-03;
+  it is no longer "this feature".
 - `@octokit/openapi-webhooks-types` package types — Why: compile-time reference for the webhook
   payload field names so our subset schemas match GitHub's real shapes.
 - GitHub REST/webhook docs (see Relevant documentation) — Why: exemplar payload structure and

@@ -4,10 +4,10 @@ title: S3 poll core — prefix window, cursor & restart semantics
 type: story
 status: todo:backlog
 parent: ./feature.md
-branch: feat/bootstrap-and-iac
+branch: feature/local-sync-client
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-28
-updated: 2026-08-03
+updated: 2026-08-31
 ---
 
 # Story: S3 poll core — prefix window, cursor & restart semantics
@@ -34,7 +34,8 @@ before any webhook ingest exists.
   so the dependency is isolated (and swappable for a dependency-free
   `osascript`/`notify-send`/`SnoreToast` shell-out later).
 - Config (bucket name, region, poll interval, AWS profile/creds) comes from environment /
-  config, not hardcoded; logging uses winston per the guidance.
+  config, not hardcoded; logging uses **Effect's `Logger`** per the guidance (see the Logging row
+  in `CLAUDE.md`) — not winston.
 - **End-to-end proof:** with the daemon running against the provisioned bucket, manually
   putting a valid event object into the bucket produces a desktop notification on macOS within
   one poll interval.
@@ -93,34 +94,49 @@ before any webhook ingest exists.
   fail return typed result/`Either`, never bare `null`/`undefined`.
 - **Async** (`typescript.md`): every promise-returning function uses `async`; sequential async
   (if any) threads through `reduce`, never `forEach(async …)`.
-- **Logging** (`.agents/guidance/logging.md`, `node/preferences.md`): a default **winston**
-  logger; structured logs; every skipped/failed object logs key + reason.
+- **Logging** (`.agents/guidance/logging.md` + the Logging row in `CLAUDE.md`): **Effect's
+  `Logger`, not winston.** Call sites use `Effect.log*`; a custom `Logger` installed via
+  `Logger.replace` owns serialization — JSONL carrying `level`, `env`, `timestamp` (with
+  milliseconds) and `service` to the shipped stream, and a readable single line to a TTY. Every
+  skipped or failed object logs its key **and** the reason, per `logging.md`'s rule that an error
+  names the offending value.
 - **Separation at module level** (`general.md`): split `s3-client.ts`, `poller.ts`,
   `state.ts`, `notify.ts` (adapter), `notification-content.ts` (pure), `daemon.ts` (loop),
   `config.ts`, `logger.ts`.
 
 ### Files to read — READ THESE BEFORE IMPLEMENTING
-- `.agents/plans/bootstrap-and-iac/event-model-package.md` — Why: the `parseEvent`/`parseKey`
+- `.agents/plans/minimal-event-pipeline/event-model-package.md` (AWE-150) — Why: the `parseEvent`/`parseKey`
   API and `Event` type this app consumes.
-- `.agents/guidance/logging.md` and `.agents/frameworks/node/preferences.md` — Why: winston
-  default-logger conventions.
+- `.agents/guidance/logging.md` — Why: the binding **format** rules (required keys, JSONL to the
+  shipped stream, readable line to the TTY, "an error message must name the offending value").
+  **Read it for the format, not the library:** its worked example is winston because it predates
+  the Effect ADR, and `node/preferences.md` scopes winston to the explicitly-not-using-Effect
+  branch. This project uses Effect's `Logger` — see the Logging row in `CLAUDE.md`.
+- `.agents/cache/effect/v3/_main/effect.md` (search the `## Logging` category) — Why: the
+  `Effect.log*` call-site surface. **Note:** there is no `logger.md` in the Effect doc cache as of
+  2026-08-31 — `Logger.make` / `Logger.replace` are not yet mirrored locally, so consult the live
+  Effect docs linked below, or run `/update-effect-docs` to generate a `Logger` reference first.
+- `.agents/cache/effect/v3/_main/layer.md` — Why: installing the custom logger as a `Layer` at the
+  daemon entry point.
 - `.agents/languages/typescript/typescript.md` (Looping, Async, Return Values) — Why: the
   no-loop / result-type / async rules the poll loop must obey.
 - `.agents/tests.md` + `.agents/languages/typescript/typescript-testing.md` — Why: integration
   against a real test bucket, exemplars, fixtures-over-mocks, co-located `.spec.ts`.
-- `.agents/plans/bootstrap-and-iac/infra-s3-and-dns.md` — Why: the bucket name/region outputs
-  this daemon reads.
+- `.agents/plans/minimal-event-pipeline/infra-s3-and-dns.md` (AWE-151) — Why: the bucket
+  name/region outputs this daemon reads (`event_bucket_name`), and the `EVENT_BUCKET` convention.
 
 ### Files to create / change
 - `apps/desktop-notifier/package.json` — `@personal-events/desktop-notifier`, `type: module`,
-  deps: `@aws-sdk/client-s3`, `@aws-sdk/credential-providers`, `toasted-notifier`, `winston`,
+  deps: `@aws-sdk/client-s3`, `@aws-sdk/credential-providers`, `toasted-notifier`,
   `@personal-events/event-model` (workspace:*), `effect`; bin entry for the daemon.
+  **No `winston` dependency.**
 - `apps/desktop-notifier/tsconfig.json` / `tsup.config.ts` — extend base; build the daemon.
 - `apps/desktop-notifier/types/toasted-notifier.d.ts` — hand-written module shim (notify
   options + callback + default export) so the CJS package types under `esModuleInterop`.
 - `apps/desktop-notifier/src/config.ts` — env-driven config (bucket, region, interval, log
   level) validated with effect Schema.
-- `apps/desktop-notifier/src/logger.ts` — default winston logger (console + optional file).
+- `apps/desktop-notifier/src/logger.ts` — the Effect `Logger` layer: a `Logger.make` that emits
+  JSONL to the shipped stream and a readable line to a TTY, installed with `Logger.replace`.
 - `apps/desktop-notifier/src/s3-client.ts` — `createS3Client()` using `fromNodeProviderChain`,
   eager credential probe (fail fast with a clear message).
 - `apps/desktop-notifier/src/poller.ts` — `pollOnce(s3, bucket, mark) → { events, newMark }`
@@ -140,12 +156,12 @@ before any webhook ingest exists.
   — Why: default credential chain + region resolution; graceful missing-cred handling.
 - [toasted-notifier (GitHub)](https://github.com/Aetherinox/node-toasted-notifier) — Why: notify
   options, CJS/ESM interop, bundled platform helpers.
-- [winston](https://github.com/winstonjs/winston) — Why: default logger; `import winston from "winston"`
-  (default import) to avoid the `winston.default.format` ESM trap.
+- [Effect `Logger`](https://effect.website/docs/observability/logging/) — Why: `Effect.log*`,
+  `Logger.make`, `Logger.replace`, and how to install a custom logger as a `Layer`.
 
 ### Patterns to follow
 - **Versions:** `@aws-sdk/client-s3` ^3.10xx, `@aws-sdk/credential-providers` ^3.10xx,
-  `toasted-notifier` ^10.1, `winston` ^3.19 (pin at install).
+  `toasted-notifier` ^10.1 (pin at install). `effect` comes from the workspace catalog.
 - **High-water mark** = last key; `ListObjectsV2` `StartAfter` is **exclusive** (never
   re-returns the mark). Order by **key string**, never `LastModified` (clock skew).
 - **Stream:** call `Body.transformToString("utf-8")` exactly once (single-consume).
@@ -173,8 +189,9 @@ Execute in order.
 - **VALIDATE**: `pnpm --filter @personal-events/desktop-notifier typecheck`.
 
 #### CREATE config.ts + logger.ts
-- **IMPLEMENT**: effect-Schema-validated env config; default winston logger.
-- **GOTCHA**: missing `AWS_REGION` warns + defaults; `import winston from "winston"`.
+- **IMPLEMENT**: effect-Schema-validated env config; the Effect `Logger` layer described above.
+- **GOTCHA**: missing `AWS_REGION` warns + defaults. `Logger.replace` must be provided at the
+  **daemon entry point**, not per call site, or half the process logs in the default format.
 - **VALIDATE**: `pnpm --filter @personal-events/desktop-notifier typecheck`.
 
 #### CREATE s3-client.ts + poller.ts (Gather)
@@ -209,7 +226,7 @@ Execute in order.
   uses `paginateListObjectsV2` + `Array.fromAsync`/`flat`, `Promise.all(map(...))`, and `reduce`
   for the mark; (4) `Either`/object result types, explicit return types, `async` on
   promise-returning fns, never `forEach(async …)`; (5) no enums, `Record` lookups over if/else
-  chains; (6) arrow functions by default; structured winston logs on every skip/failure. Fix
+  chains; (6) arrow functions by default; structured Effect logs on every skip/failure. Fix
   anything that drifted — it is easy to fall back into a bare loop while wiring I/O.
 - **VALIDATE**: `pnpm --filter @personal-events/desktop-notifier exec biome check src` and
   `pnpm --filter @personal-events/desktop-notifier typecheck` clean; optionally run `/simplify` on the diff.
@@ -219,8 +236,9 @@ Execute in order.
   load/save/atomicity and ENOENT-first-run; `poller.ts` mark-advance logic.
 - **Integration** (per `.agents/tests.md`, real APIs first): run `pollOnce` against a **real
   test S3 bucket** — `PutObject` known event objects via a fixture (tracked by key, torn down
-  by key, never bucket-wipe), assert the returned events + advanced mark, and assert winston
-  logged successful processing. Use exemplars for both happy and malformed objects; assert the
+  by key, never bucket-wipe), assert the returned events + advanced mark, and assert the Effect
+  logger emitted a well-formed JSONL record for successful processing (capture it with a test
+  `Logger` rather than scraping stdout). Use exemplars for both happy and malformed objects; assert the
   malformed one is logged with key+reason and skipped. Mocks only for the genuinely
   hard-to-trigger creds-missing/network-error sad paths.
 - **Edge cases / failure modes**: empty bucket; object that fails `parseEvent`; missing creds

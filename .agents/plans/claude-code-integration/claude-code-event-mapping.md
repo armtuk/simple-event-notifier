@@ -2,17 +2,20 @@
 id: AWE-161
 title: Claude Code event mapping (@personal-events/claude-code)
 type: story
-status: todo:backlog
+status: ready
 parent: ./feature.md
-branch: feat/claude-code-integration
+pm-tool: Airtable
+pm-record: recyDtzPYIHEqN2xN
+pm-url: https://airtable.com/appnae8GXuj1rNVoQ/tblpJmL4dJ7Q4rw3U/recyDtzPYIHEqN2xN
+branch: feature/claude-code-integration
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-29
-updated: 2026-08-03
+updated: 2026-08-31
 ---
 
 # Story: Claude Code event mapping (@personal-events/claude-code)
 
-> **Restructured 2026-08-03.** Consumes `@personal-events/core` (AWE-153) instead of the former `integration-core`, and is now explicitly this feature's **Transformer + Service** per ADR `2026-08-03-0028-layered-architecture`. Re-run `/plan-story` before executing.
+> **Restructured 2026-08-03, re-planned 2026-08-31.** Consumes `@personal-events/core` (AWE-153 — Core layer contracts) rather than the former `integration-core`, and is explicitly this feature's **Transformer + Service** per ADR `2026-08-03-0028-layered-architecture`.
 
 ## Definition
 
@@ -24,31 +27,39 @@ So that "prompt complete" and "the agent needs me" become correctly typed/priori
 with no transport or AWS concerns mixed in, reusing the same template GitHub and Slack use.
 
 ### Acceptance criteria
-- A new workspace package `@personal-events/claude-code` builds, lints, and tests under the
-  monorepo toolchain and depends on `@personal-events/integration-core` (AWE-153) and
-  `@personal-events/event-model` (AWE-150).
-- **effect-Schema validators** (exemplar-driven from real Claude Code hook payloads) for the hook
-  envelope and the consumed events — at minimum `Stop`, `Notification`, `SubagentStop`,
-  `SessionStart`, `SessionEnd` — including the common fields (`session_id`, `transcript_path`,
-  `cwd`, `hook_event_name`). A malformed payload is rejected with a typed error; an **unknown**
-  `hook_event_name` is *not* rejected — it flows through to the documented default classification.
-- A **`source: "claude-code"` mapping config JSON** (schema-validated) keyed most-specific-first
-  (`hook_event_name`/state → `eventType` + `priority`) with a documented default rule. The
-  defaults must reflect intent: the "needs-you" `Notification` classifies as an **alert** at a
-  higher priority, while the per-turn `Stop` classifies as a low-priority **notification** (or is
-  suppressible) so it does not flood the bucket.
-- A **pure normalizer** that, given a validated hook payload, extracts the canonical fields used
-  by `integration-core.transform` — a human-readable `name` (e.g. `prompt-complete`,
-  `agent-waiting`), the `source`, an event-identity for dedupe (session id + hook event), the
-  project/`cwd`, and a transcript reference — and **drops noise** (events not in the consumed
-  set). It is pure, takes only the slices it needs (slice-don't-dump), and performs no I/O.
-- Changing an event's classification or priority is a **JSON edit only**; the config rejects
-  unknown shapes via its schema.
-- Unit tests cover: each consumed event validating and mapping to the expected eventType/priority;
-  an unknown event hitting the default; a malformed payload producing a typed error; and the
-  normalizer's field extraction + noise filtering.
-- Guidance conformance pass (pure Gather→Compute, no enums, `Record` lookups over if/else chains,
-  typed results, module SRP), verified by `biome` + `typecheck`.
+
+- **AC-01** — A new workspace package `@personal-events/claude-code` builds, lints, and tests under
+  the monorepo toolchain and depends on **`@personal-events/core`** (AWE-153 — Core layer
+  contracts) and `@personal-events/event-model` (AWE-150 — Shared event-model package). It is
+  **pure**: no `@aws-sdk/*`, no `node:fs`, no network, no logging side effects.
+- **AC-02** — **effect-`Schema` validators**, exemplar-driven from **real captured** Claude Code
+  hook payloads, for the hook envelope and the consumed events — at minimum `Stop`,
+  `Notification`, `SubagentStop`, `SessionStart`, `SessionEnd` — including the common fields
+  (`session_id`, `transcript_path`, `cwd`, `hook_event_name`). A malformed payload yields a typed
+  `Either` `Left` carrying a readable message; an **unknown `hook_event_name` is NOT rejected** —
+  it decodes through a permissive catch-all member and reaches the default classification.
+- **AC-03** — A **`source: "claude-code"` mapping config JSON**, schema-validated against `core`'s
+  mapping-config schema, keyed **most-specific-first** with a documented default rule. The shipped
+  defaults reflect intent: `Notification`+`permission_prompt` → `alert` priority 6;
+  `Notification`+`idle_prompt` → `alert` priority 5; `Stop` → `notification` priority 2 (so
+  per-turn completions do not flood the bucket); unmatched → `notification` priority 3.
+- **AC-04** — A **pure normalizer** that, given a decoded hook payload, produces the
+  `NormalizedEvent` shape `core` consumes: a human-readable `name` (`prompt-complete`,
+  `agent-waiting`, …), the `source`, an **event identity for dedupe**, the project derived from
+  `cwd`, and a transcript reference. It **drops noise** (events outside the consumed set), takes
+  only the field slices it needs, and performs no I/O.
+- **AC-05** — Every `name` the package can emit satisfies event-model's `NoDotString`
+  (`/^[^.]+$/`), **including the default kebab derivation for an unknown `hook_event_name`** — a
+  hook event containing a dot must not produce an unparseable S3 key.
+- **AC-06** — Changing an event's classification or priority is a **JSON edit only**, requiring no
+  code change; the config schema rejects unknown shapes and out-of-range priorities.
+- **AC-07** — Unit tests, driven by the exemplar files, cover: each consumed event decoding and
+  mapping to its expected `eventType`/`priority`; an unknown event reaching the default; a
+  malformed payload producing a readable typed `Left`; and the normalizer's field extraction and
+  noise filtering.
+- **AC-08** — Guidance conformance: pure Gather→Compute with no Persist, module SRP, no enums
+  (`as const` / `Schema.Literal`), `Record` lookups over `if`/`else if` chains, `Either` results,
+  no accumulator loops, explicit return types. Verified by `biome` + `typecheck`.
 
 ### Notes / Open questions
 - Confirm the exact Claude Code hook payload shapes by capturing real examples (the schemas are
@@ -63,8 +74,8 @@ with no transport or AWS concerns mixed in, reusing the same template GitHub and
 
 > Validate documentation, codebase patterns, and task sanity before implementing. This package is
 > **pure Gather→Compute** — schemas, a classification config, and a normalizer, with **zero I/O and
-> zero transport/AWS code**. It is the Claude-specific instance of the `integration-core` template;
-> keep all Claude specifics here and nothing provider-specific in `integration-core`. Do not restate
+> zero transport/AWS code**. It is the Claude-specific **Transformer + Service** over `@personal-events/core`;
+> keep all Claude specifics here and nothing provider-specific in `core`. Do not restate
 > the user story.
 
 ### Decisions resolved during planning (open questions answered)
@@ -93,12 +104,57 @@ with no transport or AWS concerns mixed in, reusing the same template GitHub and
   `agent_id?`. This id is carried in the normalized output for AWE-162 to use; note that true
   cross-time replay dedupe is limited (the S3 key is timestamp-led) — the id is best-effort.
 - **Trigger discrimination**: model the Claude trigger as a `source: "claude-code"` variant of
-  `integration-core`'s `source`-discriminated trigger union, matching on `hook_event_name` (+
+  `core`'s `source`-discriminated trigger union, matching on `hook_event_name` (+
   optional `notification_type`). This keeps it non-confusable with GitHub's `event`+`action` and
   Slack's `channelType`+`subtype` triggers.
-- **Seam to `integration-core` is read at execution time**: AWE-153 is a hard prerequisite and will
-  exist when this runs. **Task 0 below reads `integration-core`'s actual exported surface** and
+- **Seam to `core` is read at execution time**: AWE-153 is a hard prerequisite and will
+  exist when this runs. **Task 0 below reads `core`'s actual exported surface** and
   conforms the normalizer's output + the config shape to it, rather than guessing the stub's API.
+
+### Acceptance evidence design
+
+- **AC-02 (unknown event is not rejected)** — the criterion most likely to be implemented backwards.
+  - *Defining input property*: a payload whose `hook_event_name` is genuinely **not** in the
+    consumed set (e.g. `PreToolUse`), carrying otherwise-valid common fields.
+  - *Direct assertions*: `decodeHookEvent` returns a `Right`, **not** a `Left`, and the value
+    carries the raw `hook_event_name`.
+  - *Evidence command*: `pnpm --filter @personal-events/claude-code test -- decode-unknown-event`
+  - *Counterexample*: pair it with a genuinely malformed payload (missing `session_id`) asserting a
+    `Left` — a schema that accepts everything would otherwise pass the unknown-event test trivially.
+- **AC-03 (classification defaults)**
+  - *Defining input property*: one real exemplar per row of the shipped table, including **both**
+    `Notification` subtypes, since they classify to different priorities.
+  - *Direct assertions*: each exemplar resolves to exactly the documented `eventType` and
+    `priority`; the table test enumerates every shipped rule and fails if a rule is added without a
+    case.
+  - *Evidence command*: `pnpm --filter @personal-events/claude-code test -- classification-table`
+- **AC-05 (no-dot invariant on every emitted name)** — the subtle one.
+  - *Defining input property*: an unknown `hook_event_name` that **contains a dot** (e.g.
+    `Custom.Thing`), exercising the default kebab derivation rather than the fixed table values.
+  - *Direct assertions*: the derived `name` matches `/^[^.]+$/` and is accepted by event-model's
+    `NoDotString` schema.
+  - *Evidence command*: `pnpm --filter @personal-events/claude-code test -- name-no-dot`
+  - *Counterexample*: the fixed table values trivially satisfy this; only the derived-default path
+    can violate it, so a test that checks only the table proves nothing.
+- **AC-01 (purity)**
+  - *Evidence command*:
+    `! rg -n '@aws-sdk|node:fs|node:net|fetch\(' packages/claude-code/src`
+  - *Direct assertions*: no I/O import of any kind in the package source.
+- **AC-06 (config-only change)**
+  - *Defining input property*: a modified copy of the config JSON with one rule's priority changed.
+  - *Direct assertions*: classification changes accordingly with **no** source edit; a tampered
+    config with priority `9` is rejected by the schema.
+  - *Evidence command*: `pnpm --filter @personal-events/claude-code test -- config-schema`
+- **Complete-set inventory (AC-07 says *each* consumed event)**: the consumed set is exactly
+  `Stop`, `Notification` (× `permission_prompt`, `idle_prompt`, other), `SubagentStop`,
+  `SessionStart`, `SessionEnd` — **7 cases**, one exemplar file each, enumerated by an `it.each`
+  over the `exemplars/` directory listing so a missing exemplar fails rather than silently
+  shrinking coverage.
+
+**No production write, and no live integration, is required by this story.** The package is pure —
+its only inputs are captured exemplar files. The end-to-end S3 path is exercised by AWE-162 —
+Publishable hook CLI. Exemplar capture is a **local** activity against the developer's own Claude
+Code session, not a third-party API call.
 
 ### Architectural constraints — VERIFY BEFORE WRITING ANY TASK
 <!-- From .agents/general.md, typescript.md, effect/index.md. -->
@@ -107,7 +163,7 @@ with no transport or AWS concerns mixed in, reusing the same template GitHub and
 - **Module-level SRP** (`general.md`): `hook-events.ts` (payload schemas + the discriminated union),
   `notification-types.ts` (the `notification_type` `as const` set), `decode.ts` (the boundary
   `decodeHookEvent` returning `Either`), `normalize.ts` (the pure normalizer), `config-schema.ts`
-  (the Claude trigger variant if `integration-core` needs the instance to declare it),
+  (the Claude trigger variant if `core` needs the instance to declare it),
   `claude-code.config.json` (the rules data), `index.ts` (re-exports).
 - **Slice, don't dump** (`general.md`): the normalizer and any helper take the specific fields they
   need (e.g. a `Notification` payload's `notification_type`), not the whole envelope, except the
@@ -123,14 +179,19 @@ with no transport or AWS concerns mixed in, reusing the same template GitHub and
 - **TS house style**: no semicolons, double quotes, width 140, arrow functions, `.ts` imports.
 
 ### Files to read — READ THESE BEFORE IMPLEMENTING
-- **`@personal-events/integration-core` actual exports** (the built AWE-153 package — `src/index.ts`
-  and its config-schema + `transform` + `SourceAdapter`/`SecondaryProcessor` interfaces) — Why: the
+- **`@personal-events/core` actual exports** (the built AWE-153 package — `packages/core/src/index.ts`:
+  `Transformer<Raw>`, `classify`, `NormalizedEvent`, `MappingConfigSchema`, the typed error classes)
+  — Why: the
   exact contract this package must conform to (config shape, trigger union, transform inputs). This
-  is the single most important read; AWE-153's `.agents/plans/github-integration/integration-framework.md`
-  Definition is the spec, the built code is the truth.
-- `.agents/plans/bootstrap-and-iac/event-model-package.md` — Why: the `Event` shape, the no-dot
+  is the single most important read; AWE-153's
+  `.agents/plans/minimal-event-pipeline/core-layer-contracts.md` Definition is the spec, the built
+  code is the truth. **Note:** AWE-153 moved out of `github-integration` into
+  `minimal-event-pipeline` on 2026-08-03 and was re-scoped to `@personal-events/core`; the
+  `SourceAdapter`/`SecondaryProcessor`/`transform` names above are stale — it now exports
+  `Transformer<Raw>`, `classify`, `NormalizedEvent` and the `EventRepository` tag.
+- `.agents/plans/minimal-event-pipeline/event-model-package.md` (AWE-150) — Why: the `Event` shape, the no-dot
   `source`/`name` constraint (the `name` labels must satisfy `/^[^.]+$/`), and priority 1–8.
-- `.agents/frameworks/effect/index.md` and `.agents/frameworks/effect/v3/_main/schema.md` — Why:
+- `.agents/frameworks/effect/effect.md` and `.agents/cache/effect/v3/_main/schema.md` — Why:
   `Schema.Struct`, `Schema.Literal`, `Schema.Union` discriminated unions, `Schema.decodeUnknownEither`,
   `TreeFormatter.formatErrorSync`, `optionalWith`.
 - `.agents/tests.md` and `.agents/languages/typescript/typescript-testing.md` — Why: the
@@ -144,12 +205,12 @@ with no transport or AWS concerns mixed in, reusing the same template GitHub and
 ### Files to create / change
 - `packages/claude-code/package.json` — `@personal-events/claude-code`, `private: true`,
   `type: module`; `dependencies`: `effect`, `@personal-events/event-model`,
-  `@personal-events/integration-core` (`workspace:*`); `devDependencies`: `tsdown`, `vitest`,
+  `@personal-events/core` (`workspace:*`); `devDependencies`: `tsup`, `vitest`,
   `typescript`; scripts.
 - `packages/claude-code/tsconfig.json` — extends base, `composite: true`. Set
   `resolveJsonModule: true` (to import the config JSON) if not already in the base.
-- `packages/claude-code/tsdown.config.ts` — esm, node24, `dts: true`; ensure the config JSON is
-  emitted/copied (either `import` it so it's bundled into the entry, or add a `copy`/asset rule).
+- `packages/claude-code/tsup.config.ts` — esm, node24, `dts: true`; ensure the config JSON is
+  emitted/copied (either `import` it so it is bundled into the entry, or add an asset copy rule).
 - `packages/claude-code/vitest.config.ts` — `defineProject` `name: "claude-code"`.
 - `packages/claude-code/src/notification-types.ts` — `notificationTypes` `as const` +
   `NotificationType` (`permission_prompt`, `idle_prompt`, `auth_success`, `elicitation_dialog`,
@@ -160,10 +221,10 @@ with no transport or AWS concerns mixed in, reusing the same template GitHub and
 - `packages/claude-code/src/decode.ts` — `decodeHookEvent(raw: unknown): Either<ClaudeHookEvent, string>`
   via `Schema.decodeUnknownEither(ClaudeHookEvent, { errors: "all" })` + `TreeFormatter`.
 - `packages/claude-code/src/normalize.ts` — the pure normalizer → the input shape
-  `integration-core.transform` consumes (trigger key + `name` + `source` + `eventId` + project +
+  `core's `classify`` consumes (trigger key + `name` + `source` + `eventId` + project +
   raw payload).
 - `packages/claude-code/src/config-schema.ts` — the Claude `source: "claude-code"` trigger schema
-  (if `integration-core` requires the instance to declare its trigger variant) + a typed loader for
+  (if `core` requires the instance to declare its trigger variant) + a typed loader for
   the config JSON.
 - `packages/claude-code/claude-code.config.json` — the rules table above as data.
 - `packages/claude-code/src/index.ts` — public re-exports (schemas, `decodeHookEvent`, `normalize`,
@@ -216,7 +277,10 @@ with no transport or AWS concerns mixed in, reusing the same template GitHub and
   captured JSON into `exemplars/`. Document the capture method in a short `exemplars/README.md`.
 
 ### Codebase irregularities to ignore
-- **Bundler:** use **tsdown** (see AWE-160 / feature report), not tsup — despite AWE-149's note.
+- **Bundler: use `tsup`.** An earlier version of this plan said tsdown, citing AWE-160 — Shared S3
+  event writer. That story is `todo:abandoned`, and `CLAUDE.md`'s binding stack table specifies
+  **tsup**, as does every `ready` sibling story. `node/preferences.md` mentions tsdown but is
+  superseded here by the project's own `CLAUDE.md`.
 - Effect Schema is in **`effect`** (not `@effect/schema`). Use `Schema.decodeUnknownEither`
   (current v3); ignore effect v4-beta API names (`decodeUnknownExit`, `TaggedUnion`).
 - `Notification` **does** support a `matcher` on `notification_type` in settings.json (used by
@@ -225,16 +289,18 @@ with no transport or AWS concerns mixed in, reusing the same template GitHub and
 ### Step-by-step tasks
 Execute in order.
 
-#### READ integration-core's actual surface (Task 0 — no code)
-- **IMPLEMENT**: open the built `@personal-events/integration-core` exports; record the exact config
+#### READ `@personal-events/core`'s actual surface (Task 0 — no code)
+- **IMPLEMENT**: open the built `@personal-events/core` exports; record the exact mapping-config
   schema, the trigger-union extension mechanism, and `transform`'s input/output types. Conform every
   shape below to it. If it diverges materially from the AWE-153 Definition, note it and adapt.
-- **VALIDATE**: write down (in the PR description) the integration-core types this package targets.
+- **VALIDATE**: write down (in the PR description) the `core` types this package targets:
+  `Transformer<Raw>`, `classify`, `NormalizedEvent`, `MappingConfigSchema`.
 
 #### CREATE packages/claude-code scaffold
-- **IMPLEMENT**: `package.json`/`tsconfig`/`tsdown.config`/`vitest.config`; `resolveJsonModule`.
-- **PATTERN**: mirror AWE-160 / a built sibling mapping package.
-- **GOTCHA**: ensure the config JSON ships in the build output (import it into the entry so tsdown
+- **IMPLEMENT**: `package.json`/`tsconfig`/`tsup.config`/`vitest.config`; `resolveJsonModule`.
+- **PATTERN**: mirror a built sibling package — `packages/event-model` (AWE-150) or
+  `packages/core` (AWE-153). **Not** AWE-160, which is abandoned and was never built.
+- **GOTCHA**: ensure the config JSON ships in the build output (import it into the entry so tsup
   bundles it, or add an asset copy step).
 - **VALIDATE**: `pnpm --filter @personal-events/claude-code build`.
 
@@ -250,7 +316,7 @@ Execute in order.
 - **VALIDATE**: `pnpm --filter @personal-events/claude-code typecheck`.
 
 #### CREATE the config (claude-code.config.json + config-schema.ts) and normalizer (normalize.ts)
-- **IMPLEMENT**: the rules table as JSON validated by integration-core's config schema (+ the Claude
+- **IMPLEMENT**: the rules table as JSON validated by `core`'s mapping-config schema (+ the Claude
   trigger variant); the pure `normalize` producing transform inputs (trigger key, `name`, `source`,
   `eventId`, project from `basename(cwd)`, transcript ref + raw in payload), dropping non-consumed
   events.
@@ -291,4 +357,4 @@ Execute in order.
 - Level 3 — Unit: `pnpm --filter @personal-events/claude-code test`
 - Level 4 — Consume check: confirm AWE-162 can
   `import { decodeHookEvent, normalize, claudeCodeConfig } from "@personal-events/claude-code"`
-  and that `normalize`'s output type matches `integration-core.transform`'s expected input.
+  and that `normalize`'s output type matches `core's `classify``'s expected input.

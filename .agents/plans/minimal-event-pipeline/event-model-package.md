@@ -4,7 +4,7 @@ title: Shared event-model package
 type: story
 status: ready
 parent: ./feature.md
-branch: feat/bootstrap-and-iac
+branch: feature/minimal-event-pipeline
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-28
 updated: 2026-06-28

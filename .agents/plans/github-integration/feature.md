@@ -9,7 +9,7 @@ functional-area: event-sources
 depends-on: [minimal-event-pipeline]
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-28
-updated: 2026-08-03
+updated: 2026-08-31
 branch-name: feature/github-integration
 ---
 
@@ -142,6 +142,13 @@ Ordered by dependency. Each is a coherent ~1hr-review increment (not a micro-PR)
   inherited `vpc.tf` assumed silently.
 - **Secret management.** The HMAC secret needs secure storage and rotation; AWE-155 provisions it,
   AWE-156 reads it, and neither should ever log it.
-- **AWE-155 and AWE-156 carry pre-restructure plans.** Both were written against the dual-path,
-  `integration-core`-framework shape and typed for `Promise`. AWE-156's code sketches were converted
-  to Effect on 2026-08-03; both still need `/plan-story` re-runs before execution.
+- ~~**AWE-155 and AWE-156 carry pre-restructure plans.**~~ **Partly resolved 2026-08-31.**
+  **AWE-155 — Generic webhook ingest (API Gateway + Lambda)** has been re-planned and is `ready`.
+  **AWE-156 — GitHub webhook handler (signature verify → S3)** is **still** `todo:backlog` and
+  still carries its pre-restructure plan: it names `integration-core`, specifies winston, and was
+  written against the dual-path shape. It needs a `/plan-story` re-run before execution.
+- **The endpoint is CloudFront-fronted because WAF cannot attach to an API Gateway HTTP API**
+  (decided 2026-08-31; AWS WAF supports REST APIs, CloudFront, ALB and others, but not HTTP APIs).
+  This adds roughly **$10/month per environment** in WAF charges — the largest recurring cost in
+  the system. The ingest Lambda is deliberately **not** VPC-attached, a recorded deviation from
+  `aws.md` justified by its having no private-network dependency.

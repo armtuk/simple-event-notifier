@@ -2,14 +2,14 @@
 id: minimal-event-pipeline
 title: Minimal event pipeline — bucket, DNS, event model, and push
 type: feature
-status: todo:backlog
+status: ready
 parent: none
 pm-tool: Airtable
 functional-area: platform-foundation
 depends-on: []
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-08-03
-updated: 2026-08-03
+updated: 2026-08-31
 branch-name: feature/minimal-event-pipeline
 ---
 
@@ -151,8 +151,13 @@ Ordered by dependency. Each is a coherent ~1hr-review increment (not a micro-PR)
 - **Object keys are built only by the codec.** No other package assembles a key string. The bash
   wrapper in AWE-214 contains no event logic whatsoever, which is what structurally prevents a
   second implementation in shell.
-- **Bucket identity resolution** (`--bucket` > env var > Terraform output) is decided in AWE-151 and
-  consumed by AWE-213; the two must agree.
+- **Bucket identity resolution is `--bucket` > `EVENT_BUCKET`** (decided 2026-08-31). AWE-151
+  exposes the name as the Terraform output `event_bucket_name`; an operator reads it from there and
+  sets `EVENT_BUCKET`. Nothing reads Terraform state at runtime. AWE-213 implements the precedence
+  and AWE-214's wrapper forwards it untouched.
+- **`@personal-events/s3-repository` provides the live `EventRepository` layer** that AWE-153
+  declares as a `Context.Tag`. AWE-155 and AWE-162 must obtain `put` by providing that layer rather
+  than constructing their own S3 client — this is what keeps one Persist boundary for the system.
 
 ### Risks
 
@@ -163,15 +168,30 @@ Ordered by dependency. Each is a coherent ~1hr-review increment (not a micro-PR)
 - **DNS delegation needs real AWS state.** The parent `fifthdimensionengineering.com` zone must
   exist and be writable by the credentials used, and NS propagation is not instant — which
   complicates automated verification of AWE-151's acceptance criteria.
-- **Remote-state bootstrapping is chicken-and-egg.** The state bucket and lock table must exist
-  before `terraform init` can use them; AWE-151 must define how that is seeded.
+- ~~**Remote-state bootstrapping is chicken-and-egg.**~~ **Resolved 2026-08-31.** The shared state
+  bucket `terraform.tfstate.us-west-2.fifthdimensionengineering.com` already exists (measured:
+  2026-08-30 via `aws s3api head-bucket`), and Terraform 1.11+ supplies native S3 locking via
+  `use_lockfile`. There is no bootstrap module and no DynamoDB lock table. See AWE-151 AC-03.
 - **The event model is a published contract from its first commit.** It is consumed by the bucket's
   whole history and later by an npm-published CLI. Treat it as versioned; changing it after F4/F5
   is a migration, not an edit.
 - **Two CLIs with opposite failure contracts.** The push CLI (AWE-213) must exit non-zero so
   automation detects failure; the Claude hook CLI (AWE-162, F4) must exit 0 to protect the agent
   session. Documented in both READMEs.
-- **AWE-151 and AWE-153 carry pre-restructure plans.** Both were deep-planned against the old
-  feature shape — AWE-153 as a config-driven framework, AWE-151 against greenfield Terraform. Both
-  are set to `todo:backlog` and need `/plan-story` re-runs before execution; do not execute their
-  existing Plan sections as written.
+- ~~**AWE-151 and AWE-153 carry pre-restructure plans.**~~ **Resolved 2026-08-31.** Both have been
+  re-planned against the current feature shape and are `ready`. AWE-151's plan now extends the
+  inherited `modules/` + `environments/` layout that AWE-215 leaves behind, rather than the
+  greenfield `infra/personal-events/` root it previously proposed.
+- ~~**`terraform` is not installed on the development machine.**~~ **Resolved 2026-08-31** —
+  Terraform **v1.16.0** is installed at `/usr/bin/terraform` (measured via `terraform version`),
+  above the ≥ 1.11 floor `use_lockfile` requires.
+- **The inherited Terraform does not currently `validate`.** With Terraform actually run for the
+  first time on 2026-08-31, two further defects surfaced beyond the three AWE-215 catalogued:
+  `data "aws_route53_zone" "project-zone"` is declared twice (`modules/dns.tf:2` and
+  `modules/apiGateway.tf:62`), so `validate` fails outright; and `fmt -check -recursive` fails on
+  11 files. Both are recorded in AWE-215 — Terraform future-state quarantine as defects 4 and 5.
+- **AWE-151 and AWE-213 each require a production write** to satisfy their acceptance criteria
+  (creating real Route53 zones and S3 buckets; proving the idempotent conditional put). **Both
+  approvals were requested and GRANTED by the user on 2026-08-31**, scoped verbatim in each story's
+  `*.acceptance.json`; execution does not need to re-ask within that scope. The TypeScript track's
+  other four stories need no production write.
