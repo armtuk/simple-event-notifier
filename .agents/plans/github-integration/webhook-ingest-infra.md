@@ -31,20 +31,30 @@ integration standing up its own infrastructure.
 - **AC-01** — Terraform provisions, per environment, an **API Gateway REST API** with a
   **`REGIONAL` endpoint type**, integrated with a **Lambda** (`nodejs24.x`, **not** VPC-attached,
   **no Lambda layer**) whose IAM role grants **only** `s3:PutObject` on the event bucket ARN and
-  `ssm:GetParameter` + `kms:Decrypt` on the webhook-secret parameter. No wildcard resource ARNs.
-  This **restores and reduces** the inherited `apiGateway.tf`, which is already a REST API, rather
-  than authoring a new `aws_apigatewayv2_*` stack.
+  `ssm:GetParameter` on the webhook-secret parameter ARN. The parameter is a `SecureString`
+  encrypted with the **AWS-managed key `alias/aws/ssm`**, whose key policy already permits
+  decryption by account principals via `kms:ViaService` — so **no separate `kms:Decrypt` grant is
+  required**. (If a customer-managed key is ever adopted, `kms:Decrypt` must be added **scoped to
+  that key's ARN**, never `Resource = "*"`.) No wildcard resource ARNs anywhere.
+  The REST API sets **`disable_execute_api_endpoint = true`**, so the custom domain is the only
+  route in. This **restores and reduces** the inherited `apiGateway.tf`, which is already a REST
+  API, rather than authoring a new `aws_apigatewayv2_*` stack.
 - **AC-02** — An **AWS WAF Web ACL is attached directly to the REST API stage** via
   `aws_wafv2_web_acl_association`, with `scope = "REGIONAL"` in the API's own region
   (`us-west-2`) — **no CloudFront distribution is involved**. It carries the `aws.md` managed rule
   set — `AWSManagedRulesCommonRuleSet`, `AWSManagedRulesKnownBadInputsRuleSet`,
   `AWSManagedRulesAmazonIpReputationList` — **plus** an explicit rate-limit rule. WAF logging is
   enabled to an S3 destination with a 60-day expiry per `aws.md`.
-- **AC-03** — **There is exactly one route to the API.** Because WAF attaches natively to the stage,
-  no origin-bypass path exists and **no origin-verify header mechanism is required**. The criterion
-  is that a request to the API's hostname traverses the Web ACL: a request matching a managed rule
-  is blocked with `403` **before reaching the Lambda**, evidenced by the absence of a
-  corresponding Lambda invocation log.
+- **AC-03** — **The custom domain is the only route to the API, and every request through it
+  traverses the WAF.** Two independently-checked halves:
+  1. **No second route.** With `disable_execute_api_endpoint = true`, a request to the default
+     `https://{api-id}.execute-api.{region}.amazonaws.com/...` hostname returns `403`. Without that
+     attribute the default hostname stays live, so this is asserted explicitly rather than assumed.
+  2. **The WAF is in the path.** A request to the custom domain matching a managed rule is blocked
+     with `403` **before reaching the Lambda**, evidenced by the absence of a corresponding Lambda
+     invocation in that window; a benign request reaches the Lambda and returns `404` from the
+     empty registry.
+  Because WAF attaches natively to the stage, no origin-verify header mechanism is required.
 - **AC-04** — A **per-environment custom hostname** resolves and serves the endpoint:
   `hooks.dev.personal-events.fifthdimensionengineering.com` and
   `hooks.prod.personal-events.fifthdimensionengineering.com`, each backed by a **regional** ACM
@@ -77,8 +87,7 @@ integration standing up its own infrastructure.
   and a second `plan` after `apply` reports **no drift** — including no perpetual diff on the WAF
   Web ACL, the REST API deployment, or the ACM certificate validation.
 - **AC-11** — **Failure modes**, each logged with the offending value and mapped to the right
-  status: unroutable path → `404`; a request blocked by the Web ACL → `403` (returned by WAF, with
-  no Lambda invocation); malformed request body → `400`; **S3 write failure → `5xx`** (so the sender can redeliver — GitHub does
+  status: unroutable path → `404`; malformed request body → `400`; **S3 write failure → `5xx`** (so the sender can redeliver — GitHub does
   not auto-retry, making this load-bearing); missing SSM parameter → `5xx` with a message naming
   the parameter; IAM denial → `5xx` with the denied action and resource named.
 - **AC-12** — Guidance conformance: G-C-P separation across distinct modules, Repository pattern
@@ -104,6 +113,13 @@ integration standing up its own infrastructure.
      gateway (~$32/month) or interface endpoints for no security gain, since there is no private
      network resource to reach. Revisit if the ingest ever needs a database or internal service.
   3. **Per-environment hostnames** `hooks.dev.…` / `hooks.prod.…`, each in its own AWE-151 zone.
+- **Corrected 2026-08-31 after PR #3 review (CodeRabbit, Cursor Bugbot):**
+  `disable_execute_api_endpoint = true` added, without which AC-03's "only route" claim was simply
+  false; the AC-11 unit inventory reduced from 6 to 5 because the WAF-blocked `403` never reaches
+  the handler; `kms:Decrypt` dropped in favour of the AWS-managed `alias/aws/ssm` key with the
+  customer-managed-key case scoped rather than wildcarded; and webhook-secret ownership reconciled
+  to the feature's cross-story contract (this story provisions, AWE-156 populates), which this
+  plan had contradicted.
 - **Running cost is non-trivial and should be understood before applying.** A WAF Web ACL is
   approximately **$5/month plus ~$1/rule/month**, so the four-rule set lands near **$10/month per
   environment** — the largest recurring cost in the system, exceeding the hosted zones, and it
@@ -165,24 +181,33 @@ integration standing up its own infrastructure.
 - **The registry ships empty.** AC-05 is provable with a **stub `WebhookIntegration`** in tests;
   the deployed handler legitimately 404s every POST until AWE-156 lands. This is deliberate, not a
   gap.
-- **This story owns no secret.** With WAF attached natively there is no origin-verify value to
-  store, so the only SSM parameter in play is the GitHub webhook HMAC secret — and that is
-  **AWE-156 — GitHub webhook handler**'s to provision and read, not this story's. This story's
-  Lambda role is granted `ssm:GetParameter` on that parameter so the handler can read it once
-  AWE-156 lands.
+- **Webhook-secret ownership, per the feature's cross-story contract: this story provisions the
+  parameter; AWE-156 — GitHub webhook handler populates and reads it.** With WAF attached natively
+  there is no origin-verify value, so the only SSM parameter in play is the GitHub webhook HMAC
+  secret. `github-integration/feature.md` assigns provisioning to AWE-155 — *"the webhook secret is
+  provisioned in AWE-155's Terraform (SSM parameter) and consumed by AWE-156's secret repository;
+  the parameter name is the contract"* — and that contract governs. Concretely: this story creates
+  `aws_ssm_parameter` at **`/personal-events/{env}/github/webhook-secret`** as a `SecureString`
+  with a placeholder value and `lifecycle { ignore_changes = [value] }` so a rotation performed out
+  of band is never reverted by `apply`; AWE-156 sets the real value and reads it. The Lambda role's
+  `ssm:GetParameter` grant targets exactly that ARN. **The parameter name is the contract — it must
+  match AWE-156's secret repository exactly.**
 
 ### Acceptance evidence design
 
-- **AC-03 (every request traverses the WAF)** — the security-critical criterion.
-  - *Defining input property*: a request whose shape a managed rule blocks, sent to the API's real
-    hostname — and, as the control, a benign request to the same hostname.
-  - *Direct assertions*: the blocked request returns `403` **and produces no Lambda invocation**
-    (verified against the function's CloudWatch log stream for that window); the benign request
-    reaches the Lambda and returns `404` from the empty registry.
+- **AC-03 (single route + every request traverses the WAF)** — the security-critical criterion.
+  - *Defining input property*: three requests — one to the **default `execute-api` hostname**, one
+    to the custom domain whose shape a managed rule blocks, and a benign control to the custom
+    domain.
+  - *Direct assertions*: the `execute-api` request returns `403` (default endpoint disabled); the
+    blocked request returns `403` **and produces no Lambda invocation** (verified against the
+    function's CloudWatch log stream for that window); the benign request reaches the Lambda and
+    returns `404` from the empty registry.
   - *Evidence command*: `bash infra/scripts/verify-ingest-waf.sh`
-  - *Counterexample*: the no-Lambda-invocation assertion is the real proof. A `403` alone could
-    come from the API itself; only the absent invocation shows WAF rejected it *before* the
-    integration ran.
+  - *Counterexamples*, both load-bearing: (a) the no-Lambda-invocation assertion — a `403` alone
+    could come from the API itself, so only the absent invocation shows WAF rejected it *before*
+    the integration ran; (b) the benign control — a Web ACL in block-everything mode would
+    otherwise pass the "was it blocked?" check trivially.
   - *Environment*: production AWS.
 - **AC-02 (WAF actually attached and enforcing)**
   - *Defining input property*: a request whose shape a managed rule blocks, plus a burst exceeding
@@ -208,9 +233,12 @@ integration standing up its own infrastructure.
   - *Counterexample*: include a body whose re-serialisation would differ only in key order —
     a naive implementation passes a simple `{"a":1}` case and fails this one.
 - **AC-11 (failure modes) — complete-set inventory.** The criterion says *each*, so the supported
-  set is enumerated and each member executed: unroutable path, missing origin header, wrong origin
-  header, malformed body, S3 write failure, missing SSM parameter, IAM denial. **7 cases**, table-
-  driven, with a guard asserting the table length so the inventory cannot silently shrink.
+  set is enumerated and each member executed **in the handler unit table**: unroutable path,
+  malformed body, S3 write failure, missing SSM parameter, IAM denial. **5 cases**, table-driven,
+  with a guard asserting the table length so the inventory cannot silently shrink. **The
+  WAF-blocked `403` is deliberately *not* in this table** — it never reaches the handler, so it
+  cannot be unit-tested there; it is proven live under AC-03 instead. Counting it here would mean
+  either an over-long table or a fake in-Lambda 403 path.
 - **AC-09 (secrets never logged)**
   - *Evidence command*: `pnpm --filter @personal-events/webhook-ingest test -- no-secret-logging`
   - *Direct assertions*: with a sentinel secret value injected, the captured Effect log output
@@ -298,8 +326,12 @@ feature's execution:**
 - `lambda.tf` — restored from `infra/future-state/`, reduced: `archive_file`, `aws_lambda_function`
   (`nodejs24.x`, **no `vpc_config`**), `aws_iam_role`, least-privilege `aws_iam_role_policy`,
   `aws_cloudwatch_log_group`.
+- `ssm.tf` — **new**: `aws_ssm_parameter` at `/personal-events/{env}/github/webhook-secret`
+  (`SecureString`, `alias/aws/ssm`, placeholder value, `lifecycle { ignore_changes = [value] }`).
+  Provisioned here, populated and read by AWE-156.
 - `apigateway.tf` — **restored from future-state and reduced**: keep `aws_api_gateway_rest_api`
-  (`endpoint_configuration { types = ["REGIONAL"] }`), `_resource`, `_method`, `_integration`
+  (`endpoint_configuration { types = ["REGIONAL"] }`, **`disable_execute_api_endpoint = true`**),
+  `_resource`, `_method`, `_integration`
   (AWS_PROXY), `_deployment`, `_stage`, `_domain_name` (regional) and `_base_path_mapping`; add
   `aws_lambda_permission`. Drop the inherited second method/integration pair if it serves the
   template's routes rather than `POST /{integration}`.
@@ -437,6 +469,8 @@ Execute in order.
 - **GOTCHA**: AWE-215 deleted the VPC, the Lambda security group and the layer outright, so the
   parked `lambda.tf` will not validate until `vpc_config` and `layers` are removed — those
   references have no targets to resolve against.
+- **GOTCHA**: set `disable_execute_api_endpoint = true` on the REST API in the same pass. Left
+  unset, the default `execute-api` hostname stays live and AC-03's single-route half fails.
 - **VALIDATE**: `terraform -chdir=infra/environments/development validate`
 
 #### RESTORE `cert.tf` (regional only) and CREATE `waf.tf`
@@ -450,9 +484,10 @@ Execute in order.
   after apply reports no drift.
 
 #### CREATE the verification scripts
-- **IMPLEMENT**: `verify-ingest-waf.sh` — assert the four rules are present, a probe request is
-  blocked with 403 **and produces no Lambda invocation**, and a benign request reaches the Lambda
-  and returns 404 from the empty registry.
+- **IMPLEMENT**: `verify-ingest-waf.sh` — assert the four rules are present; the default
+  `execute-api` hostname returns 403; a probe request to the custom domain is blocked with 403
+  **and produces no Lambda invocation**; and a benign request reaches the Lambda and returns 404
+  from the empty registry.
 - **VALIDATE**: `shellcheck infra/scripts/verify-ingest-*.sh`
 
 #### WRITE the ADR revision-log entries and the runbook

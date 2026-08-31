@@ -26,9 +26,13 @@ and an API Gateway for a system that does not exist yet.
 ### Acceptance criteria
 
 - A future-state area exists under `infra/` holding the **genuinely deferred** configuration,
-  clearly named and **not referenced by any active module**. Only three files are parked there:
-  `lambda.tf`, `cert.tf` and `apiGateway.tf` — the set AWE-155 — Generic webhook ingest actually
-  restores.
+  clearly named and **not referenced by any active module**. Exactly **five** files are parked
+  there — the set AWE-155 — Generic webhook ingest actually restores:
+  `lambda.tf` (minus its layer and `vpc_config`), `cert.tf` (regional certificate only),
+  `apiGateway.tf`, `outputs-api.tf` (`api_base_url`, which references
+  `aws_api_gateway_deployment`) and `locals-lambda.tf` (`lambda_memory`, which AWE-155's function
+  still uses). **Nothing else is parked** — in particular there is no `network-logging.tf`,
+  `iam-lambda.tf` or `main-alb.tf`; those fragments are deleted.
 - **Dead configuration is deleted, not parked** (decided 2026-08-31). Terraform has never been
   applied here, so there is no state to migrate and git history is the record. The following are
   **removed outright** because the AWE-155 decisions — a Lambda that is **not** VPC-attached, and a
@@ -50,6 +54,11 @@ and an API Gateway for a system that does not exist yet.
     regional REST endpoint needs neither.
   A short note in the ADR records what was deleted and why, so the removal is discoverable without
   reading git history.
+- **The deletion is proven by a check covering every deleted resource type**, not a representative
+  sample. A grep that tests only `aws_vpc` and `aws_nat_gateway` passes while `aws_subnet`,
+  `aws_route_table`, `aws_internet_gateway`, `aws_eip`, `aws_security_group`,
+  `aws_availability_zones`, `aws_elb_service_account`, `aws_lambda_layer_version`, the logging
+  bucket or `cert-global` survive. The proof enumerates all of them.
 - **`network.tf` is split, not moved.** `aws_s3_bucket "data_bucket"` is extracted into its own
   `s3.tf` and becomes the event bucket; the logging bucket, its policy and ownership controls, the
   Lambda security group and the availability-zone lookups go to future-state.
@@ -74,6 +83,13 @@ and an API Gateway for a system that does not exist yet.
 
 ### Notes / Open questions
 
+- **Corrected 2026-08-31 after PR #3 review (CodeRabbit).** The acceptance criteria and the task
+  list disagreed: the criteria said dead VPC/ALB configuration was deleted while a later task still
+  moved those same fragments into `future-state/network-logging.tf`, and the file inventory named
+  three parked files where the tasks produce five. The deletion proof also checked only four
+  resource types, so it could pass with `aws_subnet`, `aws_eip`, `aws_security_group`,
+  `cert-global` and others still present. One disposition per resource is now stated, the inventory
+  is five files, and the proof enumerates every deleted type.
 - **This is a split-and-move, not a file move.** Five files contain a mix of keep-and-defer
   resources. Mis-splitting silently strands a resource — either leaving VPC scaffolding active in
   the minimal module, or moving something the bucket depends on.
@@ -162,10 +178,11 @@ and an API Gateway for a system that does not exist yet.
 
 ### Files to create / change
 
-- `infra/future-state/` — new directory holding **only** `lambda.tf` (minus its layer and
-  `vpc_config`), `cert.tf` (regional certificate only) and `apiGateway.tf`, plus
-  `outputs-api.tf` receiving `api_base_url`. **`vpc.tf` is deleted, not moved**, along with the
-  ALB-logging, VPC-IAM and ALB-data fragments — nothing restores them.
+- `infra/future-state/` — new directory holding **exactly five** files: `lambda.tf` (minus its
+  layer and `vpc_config`), `cert.tf` (regional certificate only), `apiGateway.tf`,
+  `outputs-api.tf` (`api_base_url`) and `locals-lambda.tf` (`lambda_memory`).
+  **`vpc.tf` is deleted, not moved**, along with the ALB-logging, VPC-IAM and ALB-data fragments —
+  nothing restores them, so there is no `network-logging.tf`, `iam-lambda.tf` or `main-alb.tf`.
 - `infra/future-state/README.md` — what is parked, why, and that AWE-155 restores it.
 - `infra/modules/s3.tf` — **new**, receiving `aws_s3_bucket "data_bucket"` from `network.tf`.
 - `infra/modules/network.tf` — reduced or deleted if nothing remains after the split.
@@ -240,7 +257,8 @@ Execute in order, top to bottom. Run `terraform validate` after each move.
 - **GOTCHA**: `lambda.tf` also carries a `vpc_config` block referencing `aws_subnet.private_1/2`
   and `aws_security_group.lambda_sg`. Remove it in the same pass, or the parked file will hold
   references with no possible target.
-- **VALIDATE**: `! rg -q 'aws_vpc|aws_nat_gateway|aws_subnet|lambda_sg|availability_zones|elb_service_account|lambda_layer_version|us_east_1' infra/modules/`
+- **VALIDATE** (covers **every** deleted resource type, not a sample):
+  `! rg -qE 'aws_vpc|aws_subnet|aws_route_table|aws_internet_gateway|aws_nat_gateway|aws_eip|aws_security_group|aws_availability_zones|aws_elb_service_account|aws_lambda_layer_version|logging_bucket|s3_logging_bucket_policy|cert-global|us_east_1|vpc_config' infra/`
 
 #### MOVE the genuinely deferred files
 - **IMPLEMENT**: `git mv` `lambda.tf`, `cert.tf`, `apiGateway.tf` from `infra/modules/` to
@@ -249,13 +267,15 @@ Execute in order, top to bottom. Run `terraform validate` after each move.
 - **VALIDATE**: `cd infra/modules && terraform fmt -check` (expect reference errors at this stage —
   the next tasks resolve them)
 
-#### SPLIT `network.tf` → `s3.tf` + future-state
-- **IMPLEMENT**: move `aws_s3_bucket "data_bucket"` into a new `infra/modules/s3.tf`. Move the
-  logging bucket, its ownership controls, ACL, public-access-block, policy, the
+#### SPLIT `network.tf` → `s3.tf`, deleting the rest
+- **IMPLEMENT**: move `aws_s3_bucket "data_bucket"` into a new `infra/modules/s3.tf`. **Delete**
+  the logging bucket, its ownership controls, ACL, public-access-block and policy, the
   `s3_logging_bucket_policy` data source, `aws_security_group "lambda_sg"` and
-  `data "aws_availability_zones" "available"` into `infra/future-state/network-logging.tf`.
-- **GOTCHA**: the logging bucket policy references `aws_elb_service_account` from `main.tf` — both
-  move to future-state, so the reference stays intact *within* future-state.
+  `data "aws_availability_zones" "available"`. After this task `network.tf` holds nothing and is
+  removed.
+- **GOTCHA**: the logging bucket policy references `aws_elb_service_account` from `main.tf`.
+  Both are deleted, so the reference disappears with them — do **not** move either to future-state
+  in an attempt to keep the reference resolvable.
 - **GOTCHA**: if `data_bucket` references anything VPC/logging-related, note it and leave the
   reference for AWE-151 to resolve — do not silently rewrite the block.
 - **VALIDATE**: `cd infra/modules && terraform validate`
@@ -287,8 +307,11 @@ Execute in order, top to bottom. Run `terraform validate` after each move.
 - **IMPLEMENT**: grep the active module for any reference to a parked resource type.
 - **VALIDATE**:
   `! rg -q 'aws_(vpc|subnet|nat_gateway|lambda_|api_gateway|acm_|security_group|elb_service_account)' infra/modules/`
-  and `cd infra/modules && terraform fmt -check && terraform validate`; plus the deletion proof
-  `! rg -q 'aws_vpc|aws_nat_gateway|lambda_layer_version|us_east_1' infra/`
+  and `cd infra/modules && terraform fmt -check && terraform validate`; plus the full deletion
+  proof
+  `! rg -qE 'aws_vpc|aws_subnet|aws_route_table|aws_internet_gateway|aws_nat_gateway|aws_eip|aws_security_group|aws_availability_zones|aws_elb_service_account|aws_lambda_layer_version|logging_bucket|s3_logging_bucket_policy|cert-global|us_east_1|vpc_config' infra/`
+  and the parked-set proof
+  `test "$(ls infra/future-state/*.tf | wc -l)" -eq 5`
 
 ### Testing strategy
 

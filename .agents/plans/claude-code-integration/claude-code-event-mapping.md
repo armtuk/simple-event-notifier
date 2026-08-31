@@ -38,34 +38,67 @@ with no transport or AWS concerns mixed in, reusing the same template GitHub and
   (`session_id`, `transcript_path`, `cwd`, `hook_event_name`). A malformed payload yields a typed
   `Either` `Left` carrying a readable message; an **unknown `hook_event_name` is NOT rejected** —
   it decodes through a permissive catch-all member and reaches the default classification.
-- **AC-03** — A **`source: "claude-code"` mapping config JSON**, schema-validated against `core`'s
-  mapping-config schema, keyed **most-specific-first** with a documented default rule. The shipped
-  defaults reflect intent: `Notification`+`permission_prompt` → `alert` priority 6;
-  `Notification`+`idle_prompt` → `alert` priority 5; `Stop` → `notification` priority 2 (so
-  per-turn completions do not flood the bucket); unmatched → `notification` priority 3.
-- **AC-04** — A **pure normalizer** that, given a decoded hook payload, produces the
-  `NormalizedEvent` shape `core` consumes: a human-readable `name` (`prompt-complete`,
-  `agent-waiting`, …), the `source`, an **event identity for dedupe**, the project derived from
-  `cwd`, and a transcript reference. It **drops noise** (events outside the consumed set), takes
-  only the field slices it needs, and performs no I/O.
+- **AC-03** — A **`claude-code` mapping config JSON**, schema-validated against `core`'s
+  **`MappingConfigSchema`** — `{ integration, rules: Record<string, Output>, default: Output }`.
+  Trigger keys are **plain strings** computed by the normalizer, with `Notification` subtypes
+  distinguished by a **composite key** (`Notification:permission_prompt`,
+  `Notification:idle_prompt`). There is **no rule ordering and no most-specific-first matching** —
+  `core`'s `classify` is a single `Record` lookup falling back to `config.default`, and a `Record`
+  has no order. The shipped rules are: `Notification:permission_prompt` → `alert` priority 6;
+  `Notification:idle_prompt` → `alert` priority 5; `Stop` → `notification` priority 2 (so per-turn
+  completions do not flood the bucket); `SubagentStop` → `notification` 2; `SessionStart` /
+  `SessionEnd` → `notification` 1; **`default`** → `notification` priority 3.
+- **AC-04** — A **pure normalizer** producing the `NormalizedEvent` shape `core` consumes: the
+  composite **`trigger`** string, a human-readable `name` (`prompt-complete`, `agent-waiting`, …),
+  the `source`, an **event identity for dedupe**, the project derived from `cwd`, and a transcript
+  reference. It takes only the field slices it needs and performs no I/O.
+- **AC-04a** — **Suppression and unknown-handling are distinct, and the sets are disjoint.** The
+  package distinguishes two cases that must not be conflated:
+  - a **suppressed** hook event — one on an explicit, documented `suppressedHookEvents` list (the
+    high-frequency `PreToolUse` / `PostToolUse` / `UserPromptSubmit` family) — is **dropped by the
+    normalizer** and never reaches `classify`;
+  - an **unknown** `hook_event_name` — anything not consumed *and* not suppressed — is **emitted**,
+    reaching `config.default` per AC-02 and AC-03.
+  A hook event may appear in **exactly one** of: the consumed set, the suppression list, or
+  neither (unknown). A test asserts the consumed set and the suppression list do not intersect.
 - **AC-05** — Every `name` the package can emit satisfies event-model's `NoDotString`
   (`/^[^.]+$/`), **including the default kebab derivation for an unknown `hook_event_name`** — a
   hook event containing a dot must not produce an unparseable S3 key.
 - **AC-06** — Changing an event's classification or priority is a **JSON edit only**, requiring no
   code change; the config schema rejects unknown shapes and out-of-range priorities.
 - **AC-07** — Unit tests, driven by the exemplar files, cover: each consumed event decoding and
-  mapping to its expected `eventType`/`priority`; an unknown event reaching the default; a
-  malformed payload producing a readable typed `Left`; and the normalizer's field extraction and
-  noise filtering.
+  mapping to its expected `eventType`/`priority`; an **unknown** event reaching `config.default`
+  and being **emitted**; a **suppressed** event being **dropped**; a malformed payload producing a
+  readable typed `Left`; and the normalizer's field extraction.
 - **AC-08** — Guidance conformance: pure Gather→Compute with no Persist, module SRP, no enums
   (`as const` / `Schema.Literal`), `Record` lookups over `if`/`else if` chains, `Either` results,
   no accumulator loops, explicit return types. Verified by `biome` + `typecheck`.
 
 ### Notes / Open questions
+
+- **Corrected 2026-08-31 after PR #3 review (Cursor Bugbot).** Two defects in the re-planned
+  criteria are fixed above:
+  1. **Unknown events were both dropped and classified.** AC-04 required the normalizer to drop
+     "events outside the consumed set" while AC-02, AC-03 and AC-05 required those same unknown
+     events to decode, reach the default and produce a kebab `name` — mutually unsatisfiable, so an
+     implementer would have had to pick one and unknown hooks would either vanish or flood the
+     bucket. **AC-04a** now separates an explicit **suppression list** (dropped by the normalizer)
+     from **unknown** events (emitted via `config.default`), and requires the two sets to be
+     disjoint.
+  2. **The plan described a `core` contract that does not exist.** It referred to a
+     `source`-discriminated trigger union, a trigger-union extension mechanism, and
+     most-specific-first rule ordering. AWE-153 — Core layer contracts actually defines
+     `rules: Schema.Record({ key: Schema.String, value: OutputSchema })` with a required `default`,
+     resolved by a single `Record` lookup (`config.rules[normalized.trigger] ?? config.default`).
+     Trigger keys are plain strings and a `Record` has no order, so subtypes are expressed as
+     **composite keys** (`Notification:permission_prompt`). Written as it was, the config would not
+     have loaded against the real schema.
 - Confirm the exact Claude Code hook payload shapes by capturing real examples (the schemas are
   exemplar-driven); document where the exemplars came from.
-- Decide whether `SessionStart`/`SessionEnd` and `SubagentStop` are on by default or default-
-  suppressed in the shipped config (lean toward low-noise defaults; they remain config-enableable).
+- **Closed — `SessionStart`/`SessionEnd`/`SubagentStop` are consumed and emitted at low priority**
+  (1 and 2 respectively) rather than suppressed. Suppression is reserved for the genuinely
+  high-frequency `PreToolUse`/`PostToolUse`/`UserPromptSubmit` family, which fire many times per
+  turn; the session-lifecycle events fire once each and are useful context.
 - Decide the `name` derivation rule (stable, filename-safe, human-scannable in `aws s3 ls`).
 - Event-identity for dedupe: confirm a stable id exists per hook delivery (session id +
   hook_event_name + a turn/sequence marker) so AWE-162 can dedupe reliably.
@@ -103,10 +136,11 @@ with no transport or AWS concerns mixed in, reusing the same template GitHub and
   research). Compose a stable id from `session_id` + `hook_event_name` + `notification_type?` +
   `agent_id?`. This id is carried in the normalized output for AWE-162 to use; note that true
   cross-time replay dedupe is limited (the S3 key is timestamp-led) — the id is best-effort.
-- **Trigger discrimination**: model the Claude trigger as a `source: "claude-code"` variant of
-  `core`'s `source`-discriminated trigger union, matching on `hook_event_name` (+
-  optional `notification_type`). This keeps it non-confusable with GitHub's `event`+`action` and
-  Slack's `channelType`+`subtype` triggers.
+- **Trigger discrimination**: `core` has **no trigger union** — `rules` is a flat
+  `Record<string, Output>`. The normalizer therefore computes a single `trigger` **string**:
+  `hook_event_name` alone, or `` `${hook_event_name}:${notification_type}` `` when a
+  `notification_type` is present. Composite keys keep Claude's triggers non-confusable with
+  GitHub's (`event:action`) inside their own configs, without needing any schema extension.
 - **Seam to `core` is read at execution time**: AWE-153 is a hard prerequisite and will
   exist when this runs. **Task 0 below reads `core`'s actual exported surface** and
   conforms the normalizer's output + the config shape to it, rather than guessing the stub's API.
@@ -163,7 +197,6 @@ Code session, not a third-party API call.
 - **Module-level SRP** (`general.md`): `hook-events.ts` (payload schemas + the discriminated union),
   `notification-types.ts` (the `notification_type` `as const` set), `decode.ts` (the boundary
   `decodeHookEvent` returning `Either`), `normalize.ts` (the pure normalizer), `config-schema.ts`
-  (the Claude trigger variant if `core` needs the instance to declare it),
   `claude-code.config.json` (the rules data), `index.ts` (re-exports).
 - **Slice, don't dump** (`general.md`): the normalizer and any helper take the specific fields they
   need (e.g. a `Notification` payload's `notification_type`), not the whole envelope, except the
@@ -182,7 +215,8 @@ Code session, not a third-party API call.
 - **`@personal-events/core` actual exports** (the built AWE-153 package — `packages/core/src/index.ts`:
   `Transformer<Raw>`, `classify`, `NormalizedEvent`, `MappingConfigSchema`, the typed error classes)
   — Why: the
-  exact contract this package must conform to (config shape, trigger union, transform inputs). This
+  exact contract this package must conform to: `MappingConfigSchema` (`integration` / `rules`
+  `Record` / required `default`), `NormalizedEvent`, and `classify`'s single-lookup semantics. This
   is the single most important read; AWE-153's
   `.agents/plans/minimal-event-pipeline/core-layer-contracts.md` Definition is the spec, the built
   code is the truth. **Note:** AWE-153 moved out of `github-integration` into
@@ -223,9 +257,11 @@ Code session, not a third-party API call.
 - `packages/claude-code/src/normalize.ts` — the pure normalizer → the input shape
   `core's `classify`` consumes (trigger key + `name` + `source` + `eventId` + project +
   raw payload).
-- `packages/claude-code/src/config-schema.ts` — the Claude `source: "claude-code"` trigger schema
-  (if `core` requires the instance to declare its trigger variant) + a typed loader for
-  the config JSON.
+- `packages/claude-code/src/config-schema.ts` — a typed loader for the config JSON, validating it
+  against `core`'s `MappingConfigSchema`. **No trigger-variant declaration is needed** — `core`
+  keys `rules` by plain string.
+- `packages/claude-code/src/suppressed.ts` — the explicit `suppressedHookEvents` `as const` list
+  behind AC-04a, plus the assertion helper proving it is disjoint from the consumed set.
 - `packages/claude-code/claude-code.config.json` — the rules table above as data.
 - `packages/claude-code/src/index.ts` — public re-exports (schemas, `decodeHookEvent`, `normalize`,
   the loaded config).
@@ -269,8 +305,10 @@ Code session, not a third-party API call.
     Either.mapLeft(Schema.decodeUnknownEither(ClaudeHookEvent, { errors: "all" })(raw), (e) => TreeFormatter.formatErrorSync(e))
   ```
 - **`name` derivation via `Record`** keyed by `hook_event_name`, with the `Notification` case
-  delegating to a nested `Record` keyed by `notification_type` (most-specific-first), and a default
-  that kebabs the raw `hook_event_name`. No `if/else if` chains.
+  a **composite trigger string** (`` `${hook_event_name}:${notification_type}` `` when a subtype is
+  present, otherwise `hook_event_name`) used directly as the `rules` key, plus a `Record`-keyed
+  `name` derivation with a default that kebabs the raw `hook_event_name`. No `if/else if` chains,
+  and **no ordered rule list** — `core` resolves by `Record` lookup.
 - **Exemplar capture (how to get real data):** temporarily wire a hook
   `"command": "cat > /tmp/claude-hooks/$(date +%s%N).json"` (or `tee`) for `Stop`/`Notification`/etc
   in a scratch `settings.json`, drive a real Claude Code session to fire each event, and copy the
@@ -291,8 +329,9 @@ Execute in order.
 
 #### READ `@personal-events/core`'s actual surface (Task 0 — no code)
 - **IMPLEMENT**: open the built `@personal-events/core` exports; record the exact mapping-config
-  schema, the trigger-union extension mechanism, and `transform`'s input/output types. Conform every
-  shape below to it. If it diverges materially from the AWE-153 Definition, note it and adapt.
+  schema (`integration`, `rules: Record<string, Output>`, required `default`), `NormalizedEvent`'s
+  fields — in particular `trigger` — and `classify`'s single-`Record`-lookup semantics. Conform
+  every shape below to it. If it diverges materially from the AWE-153 Definition, note it and adapt.
 - **VALIDATE**: write down (in the PR description) the `core` types this package targets:
   `Transformer<Raw>`, `classify`, `NormalizedEvent`, `MappingConfigSchema`.
 

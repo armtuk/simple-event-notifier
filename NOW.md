@@ -313,3 +313,58 @@ need the vpc any longer for example."
 **Consequence caught while rewriting:** REST API proxy integration uses **payload format 1.0**, so
 the handler types are `APIGatewayProxyEvent` / `APIGatewayProxyResult`, **not** the `...V2` ones the
 HTTP-API plan specified. The plan's code patterns and `raw-request.ts` task were corrected.
+
+### 2026-08-31 — PR #3 review comments incorporated
+
+Nine automated review comments on [PR #3](https://github.com/armtuk/simple-event-notifier/pull/3)
+(Cursor Bugbot and CodeRabbit), all against commit `77276db`. Seven were valid and are fixed; two
+describe defects already planned elsewhere and were deliberately not fixed here.
+
+**Fixed — AWE-161 — Claude Code event mapping**
+
+- **Unknown events were both dropped and classified** (Cursor, Medium). AC-04 required the
+  normalizer to drop "events outside the consumed set" while AC-02/AC-03/AC-05 required those same
+  unknown events to decode, reach the default and produce a kebab `name` — mutually unsatisfiable.
+  New **AC-04a** separates an explicit `suppressedHookEvents` list (dropped) from **unknown** events
+  (emitted via `config.default`) and requires the sets to be disjoint.
+- **The plan targeted a `core` contract that does not exist** (Cursor, Medium). It described a
+  `source`-discriminated trigger union, an extension mechanism, and most-specific-first ordering.
+  AWE-153 — Core layer contracts actually defines `rules: Schema.Record({key: Schema.String, value:
+  OutputSchema})` with a required `default`, resolved by `config.rules[trigger] ?? config.default`.
+  Triggers are now plain strings with **composite keys** (`Notification:permission_prompt`), and the
+  ordering language is gone. As written it would not have loaded against the real schema.
+
+**Fixed — AWE-155 — Generic webhook ingest**
+
+- **`disable_execute_api_endpoint = true` added** (CodeRabbit). Without it the default `execute-api`
+  hostname stays live, so AC-03's "only route" claim was simply false. AC-03 now asserts it
+  returns 403 as a separate half.
+- **AC-11's unit table reduced from 6 cases to 5** (Cursor). The WAF-blocked 403 never reaches the
+  handler, so counting it meant either an over-long table or a fake in-Lambda 403 path. It is
+  proven live under AC-03 instead.
+- **`kms:Decrypt` dropped** (CodeRabbit) in favour of the AWS-managed `alias/aws/ssm` key, whose key
+  policy already permits account principals via `kms:ViaService`. The customer-managed-key case is
+  documented as scoped-to-key-ARN rather than wildcarded.
+- **Webhook-secret ownership reconciled** (CodeRabbit). This plan said AWE-156 provisions the
+  parameter; `github-integration/feature.md` says AWE-155 does. The feature's cross-story contract
+  governs: AWE-155 creates `/personal-events/{env}/github/webhook-secret` with a placeholder and
+  `ignore_changes = [value]`; AWE-156 populates and reads it.
+
+**Fixed — AWE-215 — Terraform future-state quarantine**
+
+- **The quarantine contract contradicted itself** (CodeRabbit, Major). The criteria said dead
+  VPC/ALB config was deleted while a later task still moved those fragments to
+  `future-state/network-logging.tf`, and the inventory named three parked files where the tasks
+  produce five. One disposition per resource is now stated; the parked set is exactly five files;
+  `network.tf` is deleted once emptied.
+- **The deletion proof was a sample, not a proof.** It checked four resource types and would have
+  passed with `aws_subnet`, `aws_eip`, `aws_security_group`, `cert-global` and others still
+  present. It now enumerates every deleted type, plus a parked-set count assertion.
+
+**Not fixed, with reason**
+
+- CodeRabbit flagged the broken module `source = "../../module"` and the missing `project_name`
+  (Critical), and the duplicate `data.aws_route53_zone.project-zone` (Critical). Both are real, but
+  both are **already catalogued as defects 1, 2 and 4 in AWE-215**, which exists to fix them. PR #3
+  is planning-only; fixing live Terraform in it would pre-empt a `ready` story and leave the story
+  claiming work it no longer does.

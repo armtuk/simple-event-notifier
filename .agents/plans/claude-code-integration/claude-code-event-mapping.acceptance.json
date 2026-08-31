@@ -4,7 +4,7 @@
   "acceptanceCriteria": [
     {
       "id": "AC-01",
-      "criterion": "AC-01 \u2014 A new workspace package @personal-events/claude-code builds, lints, and tests under the monorepo toolchain and depends on @personal-events/core (AWE-153) and @personal-events/event-model (AWE-150). It is pure: no @aws-sdk/*, no node:fs, no network, no logging side effects.",
+      "criterion": "AC-01 \u2014 A new workspace package @personal-events/claude-code builds, lints, and tests under the monorepo toolchain and depends on @personal-events/core (AWE-153 \u2014 Core layer contracts) and @personal-events/event-model (AWE-150 \u2014 Shared event-model package). It is pure: no @aws-sdk/*, no node:fs, no network, no logging side effects.",
       "status": "blocked",
       "implementation": [],
       "verification": [
@@ -54,7 +54,7 @@
     },
     {
       "id": "AC-03",
-      "criterion": "AC-03 \u2014 A source: \"claude-code\" mapping config JSON, schema-validated against core's mapping-config schema, keyed most-specific-first with a documented default rule. The shipped defaults reflect intent: Notification+permission_prompt \u2192 alert priority 6; Notification+idle_prompt \u2192 alert priority 5; Stop \u2192 notification priority 2 (so per-turn completions do not flood the bucket); unmatched \u2192 notification priority 3.",
+      "criterion": "AC-03 \u2014 A claude-code mapping config JSON, schema-validated against core's MappingConfigSchema \u2014 { integration, rules: Record<string, Output>, default: Output }. Trigger keys are plain strings computed by the normalizer, with Notification subtypes distinguished by a composite key (Notification:permission_prompt, Notification:idle_prompt). There is no rule ordering and no most-specific-first matching \u2014 core's classify is a single Record lookup falling back to config.default, and a Record has no order. The shipped rules are: Notification:permission_prompt \u2192 alert priority 6; Notification:idle_prompt \u2192 alert priority 5; Stop \u2192 notification priority 2 (so per-turn completions do not flood the bucket); SubagentStop \u2192 notification 2; SessionStart / SessionEnd \u2192 notification 1; default \u2192 notification priority 3.",
       "status": "blocked",
       "implementation": [],
       "verification": [
@@ -62,8 +62,16 @@
           "command": "pnpm --filter @personal-events/claude-code test -- classification-table",
           "ran": false,
           "exitCode": null,
-          "definingInputProperty": "One real exemplar per shipped rule, including BOTH Notification subtypes since they classify differently",
-          "assertions": "Each exemplar resolves to exactly the documented eventType and priority; the test enumerates every shipped rule and fails if a rule is added without a case",
+          "definingInputProperty": "One real exemplar per shipped rule, including BOTH Notification subtypes, which are distinct composite trigger keys",
+          "assertions": "Each exemplar resolves to exactly the documented eventType and priority via a single Record lookup; the config validates against core's MappingConfigSchema (integration / rules Record / required default); no ordered rule list is used",
+          "observedResult": "not run"
+        },
+        {
+          "command": "pnpm --filter @personal-events/claude-code test -- config-schema-shape",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The shipped config JSON parsed by core's MappingConfigSchema",
+          "assertions": "rules is a flat Record keyed by plain trigger strings; default is present and required; composite keys such as Notification:permission_prompt resolve \u2014 a counterexample against reintroducing a discriminated trigger union",
           "observedResult": "not run"
         }
       ],
@@ -71,7 +79,7 @@
     },
     {
       "id": "AC-04",
-      "criterion": "AC-04 \u2014 A pure normalizer that, given a decoded hook payload, produces the NormalizedEvent shape core consumes: a human-readable name (prompt-complete, agent-waiting, \u2026), the source, an event identity for dedupe, the project derived from cwd, and a transcript reference. It drops noise (events outside the consumed set), takes only the field slices it needs, and performs no I/O.",
+      "criterion": "AC-04 \u2014 A pure normalizer producing the NormalizedEvent shape core consumes: the composite trigger string, a human-readable name (prompt-complete, agent-waiting, \u2026), the source, an event identity for dedupe, the project derived from cwd, and a transcript reference. It takes only the field slices it needs and performs no I/O.",
       "status": "blocked",
       "implementation": [],
       "verification": [
@@ -79,8 +87,33 @@
           "command": "pnpm --filter @personal-events/claude-code test -- normalize",
           "ran": false,
           "exitCode": null,
-          "definingInputProperty": "Each consumed-event exemplar plus at least one event outside the consumed set",
-          "assertions": "Field extraction matches expectations for every consumed event; the out-of-set event is dropped rather than crashing or emitting",
+          "definingInputProperty": "Each consumed-event exemplar",
+          "assertions": "The composite trigger string, name, source, event identity, project from cwd and transcript reference are all extracted correctly; the function performs no I/O",
+          "observedResult": "not run"
+        }
+      ],
+      "explicitUserApproval": ""
+    },
+    {
+      "id": "AC-04a",
+      "criterion": "AC-04a \u2014 Suppression and unknown-handling are distinct, and the sets are disjoint. The package distinguishes two cases that must not be conflated: - a suppressed hook event \u2014 one on an explicit, documented suppressedHookEvents list (the high-frequency PreToolUse / PostToolUse / UserPromptSubmit family) \u2014 is dropped by the normalizer and never reaches classify; - an unknown hook_event_name \u2014 anything not consumed *and* not suppressed \u2014 is emitted, reaching config.default per AC-02 and AC-03. A hook event may appear in exactly one of: the consumed set, the suppression list, or neither (unknown). A test asserts the consumed set and the suppression list do not intersect.",
+      "status": "blocked",
+      "implementation": [],
+      "verification": [
+        {
+          "command": "pnpm --filter @personal-events/claude-code test -- suppression-vs-unknown",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "One event from the explicit suppressedHookEvents list, and one genuinely unknown hook_event_name that is NOT on that list",
+          "assertions": "The suppressed event is dropped by the normalizer and never reaches classify; the unknown event IS emitted and resolves to config.default. This is the pair that the earlier contradictory criteria made unsatisfiable",
+          "observedResult": "not run"
+        },
+        {
+          "command": "pnpm --filter @personal-events/claude-code test -- sets-disjoint",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The consumed set and the suppressedHookEvents list",
+          "assertions": "Their intersection is empty, so no hook event can be simultaneously consumed and suppressed",
           "observedResult": "not run"
         }
       ],
@@ -122,7 +155,7 @@
     },
     {
       "id": "AC-07",
-      "criterion": "AC-07 \u2014 Unit tests, driven by the exemplar files, cover: each consumed event decoding and mapping to its expected eventType/priority; an unknown event reaching the default; a malformed payload producing a readable typed Left; and the normalizer's field extraction and noise filtering.",
+      "criterion": "AC-07 \u2014 Unit tests, driven by the exemplar files, cover: each consumed event decoding and mapping to its expected eventType/priority; an unknown event reaching config.default and being emitted; a suppressed event being dropped; a malformed payload producing a readable typed Left; and the normalizer's field extraction.",
       "status": "blocked",
       "implementation": [],
       "verification": [
@@ -130,8 +163,8 @@
           "command": "pnpm --filter @personal-events/claude-code test",
           "ran": false,
           "exitCode": null,
-          "definingInputProperty": "The complete consumed set: Stop, Notification x3 subtypes, SubagentStop, SessionStart, SessionEnd \u2014 7 cases, one exemplar file each",
-          "assertions": "it.each enumerates the exemplars/ directory listing so a missing exemplar fails the suite rather than silently shrinking coverage",
+          "definingInputProperty": "The complete consumed set (7 exemplars) plus one suppressed and one unknown event",
+          "assertions": "it.each enumerates the exemplars/ directory so a missing exemplar fails the suite; the unknown event is emitted with the default; the suppressed event is dropped",
           "observedResult": "not run"
         }
       ],
@@ -229,6 +262,12 @@
     "auditor": "cold-main-agent",
     "result": "blocked",
     "counterexampleChecks": [
+      {
+        "command": "pnpm --filter @personal-events/claude-code test -- suppression-vs-unknown",
+        "ran": false,
+        "exitCode": null,
+        "observedResult": "not run"
+      },
       {
         "command": "pnpm --filter @personal-events/claude-code test -- decode-malformed",
         "ran": false,

@@ -4,7 +4,7 @@
   "acceptanceCriteria": [
     {
       "id": "AC-01",
-      "criterion": "AC-01 \u2014 Terraform provisions, per environment, an API Gateway REST API with a REGIONAL endpoint type, integrated with a Lambda (nodejs24.x, not VPC-attached, no Lambda layer) whose IAM role grants only s3:PutObject on the event bucket ARN and ssm:GetParameter + kms:Decrypt on the webhook-secret parameter. No wildcard resource ARNs. This restores and reduces the inherited apiGateway.tf, which is already a REST API, rather than authoring a new aws_apigatewayv2_* stack.",
+      "criterion": "AC-01 \u2014 Terraform provisions, per environment, an API Gateway REST API with a REGIONAL endpoint type, integrated with a Lambda (nodejs24.x, not VPC-attached, no Lambda layer) whose IAM role grants only s3:PutObject on the event bucket ARN and ssm:GetParameter on the webhook-secret parameter ARN. The parameter is a SecureString encrypted with the AWS-managed key alias/aws/ssm, whose key policy already permits decryption by account principals via kms:ViaService \u2014 so no separate kms:Decrypt grant is required. (If a customer-managed key is ever adopted, kms:Decrypt must be added scoped to that key's ARN, never Resource = \"*\".) No wildcard resource ARNs anywhere. The REST API sets disable_execute_api_endpoint = true, so the custom domain is the only route in. This restores and reduces the inherited apiGateway.tf, which is already a REST API, rather than authoring a new aws_apigatewayv2_* stack.",
       "status": "blocked",
       "implementation": [],
       "verification": [
@@ -22,6 +22,14 @@
           "exitCode": null,
           "definingInputProperty": "Every IAM policy document in the module",
           "assertions": "No wildcard resource ARN anywhere \u2014 the negative half of least-privilege",
+          "observedResult": "not run"
+        },
+        {
+          "command": "terraform -chdir=infra/environments/development plan -json | rg -q '\"disable_execute_api_endpoint\":\\s*true'",
+          "ran": false,
+          "exitCode": null,
+          "definingInputProperty": "The planned REST API resource",
+          "assertions": "disable_execute_api_endpoint is true; and no kms:Decrypt statement appears in the role policy, since the parameter uses the AWS-managed alias/aws/ssm key",
           "observedResult": "not run"
         }
       ],
@@ -54,7 +62,7 @@
     },
     {
       "id": "AC-03",
-      "criterion": "AC-03 \u2014 There is exactly one route to the API. Because WAF attaches natively to the stage, no origin-bypass path exists and no origin-verify header mechanism is required. The criterion is that a request to the API's hostname traverses the Web ACL: a request matching a managed rule is blocked with 403 before reaching the Lambda, evidenced by the absence of a corresponding Lambda invocation log.",
+      "criterion": "AC-03 \u2014 The custom domain is the only route to the API, and every request through it traverses the WAF. Two independently-checked halves: 1. No second route. With disable_execute_api_endpoint = true, a request to the default https://{api-id}.execute-api.{region}.amazonaws.com/... hostname returns 403. Without that attribute the default hostname stays live, so this is asserted explicitly rather than assumed. 2. The WAF is in the path. A request to the custom domain matching a managed rule is blocked with 403 before reaching the Lambda, evidenced by the absence of a corresponding Lambda invocation in that window; a benign request reaches the Lambda and returns 404 from the empty registry. Because WAF attaches natively to the stage, no origin-verify header mechanism is required.",
       "status": "blocked",
       "implementation": [],
       "verification": [
@@ -62,8 +70,8 @@
           "command": "bash infra/scripts/verify-ingest-waf.sh",
           "ran": false,
           "exitCode": null,
-          "definingInputProperty": "A request whose shape a managed rule blocks, sent to the API's real hostname, paired with a benign control request",
-          "assertions": "The blocked request returns 403 AND produces no Lambda invocation in the function's CloudWatch log stream for that window; the benign request reaches the Lambda and returns 404 from the empty registry. The absent-invocation assertion is the proof: a 403 alone could come from the API itself",
+          "definingInputProperty": "Three requests: one to the default execute-api hostname, one to the custom domain matching a managed rule, and a benign control to the custom domain",
+          "assertions": "The execute-api request returns 403 (default endpoint disabled); the rule-matching request returns 403 AND produces no Lambda invocation in that window; the benign request reaches the Lambda and returns 404 from the empty registry",
           "observedResult": "not run"
         }
       ],
@@ -214,7 +222,7 @@
     },
     {
       "id": "AC-11",
-      "criterion": "AC-11 \u2014 Failure modes, each logged with the offending value and mapped to the right status: unroutable path \u2192 404; a request blocked by the Web ACL \u2192 403 (returned by WAF, with no Lambda invocation); malformed request body \u2192 400; S3 write failure \u2192 5xx (so the sender can redeliver \u2014 GitHub does not auto-retry, making this load-bearing); missing SSM parameter \u2192 5xx with a message naming the parameter; IAM denial \u2192 5xx with the denied action and resource named.",
+      "criterion": "AC-11 \u2014 Failure modes, each logged with the offending value and mapped to the right status: unroutable path \u2192 404; malformed request body \u2192 400; S3 write failure \u2192 5xx (so the sender can redeliver \u2014 GitHub does not auto-retry, making this load-bearing); missing SSM parameter \u2192 5xx with a message naming the parameter; IAM denial \u2192 5xx with the denied action and resource named.",
       "status": "blocked",
       "implementation": [],
       "verification": [
@@ -222,8 +230,8 @@
           "command": "pnpm --filter @personal-events/webhook-ingest test -- failure-modes",
           "ran": false,
           "exitCode": null,
-          "definingInputProperty": "The complete enumerated set of 6 failure cases, each carrying the property that triggers its specific mode",
-          "assertions": "Each case returns its exact documented status and logs the offending value; a guard asserts the table length equals 6 so the inventory cannot silently shrink. Note the WAF-blocked 403 is proven live in AC-03, not in this unit table, because it never reaches the handler",
+          "definingInputProperty": "The complete enumerated set of 5 handler-reachable failure cases, each carrying the property that triggers its specific mode",
+          "assertions": "Each case returns its exact documented status and logs the offending value; a guard asserts the table length equals 5. The WAF-blocked 403 is deliberately excluded \u2014 it never reaches the handler and is proven live under AC-03, so including it would mean either an over-long table or a fake in-Lambda 403 path",
           "observedResult": "not run"
         }
       ],
