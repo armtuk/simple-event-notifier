@@ -360,9 +360,11 @@ development and production, and can be torn down or recreated without click-ops.
   which double-interpolates). Do not preserve these values; AC-07 replaces them.
 - **`env` defaults to the long name `development`.** `aws.md` requires the short form in DNS and
   bucket names. The directory stays `development/`; the variable value becomes `dev`.
-- **`infra/modules/provider.tf` declares an aliased `us_east_1` provider.** That alias exists for
-  the ACM certificate, which AWE-215 parks in future-state. Leave the alias only if something
-  still references it after the quarantine; otherwise it is dead and should go.
+- **`infra/modules/provider.tf` declares an aliased `us_east_1` provider — it is dead and AWE-215
+  deletes it** (decided 2026-08-31). It existed for an edge-optimized/CloudFront ACM certificate;
+  AWE-155 — Generic webhook ingest uses a **regional** REST API endpoint with a regional
+  certificate and a `REGIONAL`-scope WAF, so nothing in the system needs a `us-east-1` provider.
+  This story must not reintroduce it.
 - **Online examples still show `dynamodb_table` for locking and inline `versioning`/`acl` on
   `aws_s3_bucket`.** Both are the old pattern. Use `use_lockfile` and the split-resource model.
 - **The prior version of this story's own `## Plan` proposed `infra/personal-events/` and an

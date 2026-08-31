@@ -147,8 +147,10 @@ Ordered by dependency. Each is a coherent ~1hr-review increment (not a micro-PR)
   **AWE-156 — GitHub webhook handler (signature verify → S3)** is **still** `todo:backlog` and
   still carries its pre-restructure plan: it names `integration-core`, specifies winston, and was
   written against the dual-path shape. It needs a `/plan-story` re-run before execution.
-- **The endpoint is CloudFront-fronted because WAF cannot attach to an API Gateway HTTP API**
-  (decided 2026-08-31; AWS WAF supports REST APIs, CloudFront, ALB and others, but not HTTP APIs).
-  This adds roughly **$10/month per environment** in WAF charges — the largest recurring cost in
-  the system. The ingest Lambda is deliberately **not** VPC-attached, a recorded deviation from
-  `aws.md` justified by its having no private-network dependency.
+- **The endpoint is an API Gateway REST API with a natively-attached WAF** (decided 2026-08-31).
+  AWS WAF cannot attach to an HTTP API, and the inherited `apiGateway.tf` is **already** a REST
+  API — so reusing it attaches WAF directly to the stage, with no CloudFront hop and no
+  origin-verify mechanism. A CloudFront-fronted HTTP API was considered and rejected the same day.
+  WAF still adds roughly **$10/month per environment**, the largest recurring cost in the system.
+  The ingest Lambda is deliberately **not** VPC-attached — a recorded deviation from `aws.md`,
+  justified by its having no private-network dependency.

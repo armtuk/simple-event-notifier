@@ -271,3 +271,45 @@ committed to Effect logging, running `/update-effect-docs` to generate one would
   dissolved `desktop-notifier` app; it needs a full `/plan-story` re-run.
 - Abandoned and deliberately untouched: **AWE-160 — Shared S3 event writer**, **AWE-157 — GitHub
   activity poller**, **AWE-158 — Slack event schemas**, **AWE-159 — Slack Socket Mode client**.
+
+### 2026-08-31 (later still) — Terraform simplification; AWE-155 switched to REST API
+
+**Prompt:** "It seemed like there was some clean-up and simplification for the terraform? We don't
+need the vpc any longer for example."
+
+**Two findings, both acted on**
+
+1. **The no-VPC decision kills more than `vpc.tf`.** Following `lambda.tf:40`'s `vpc_config` →
+   `aws_subnet.private_1/2` + `aws_security_group.lambda_sg` showed a whole dependency cluster is
+   now dead rather than deferred: the entire `vpc.tf` (VPC, 4 subnets, 2 route tables, 4
+   associations, internet gateway, **NAT gateway**, EIP), `lambda_sg`, `data
+   "aws_availability_zones"`, the `lambda_vpc_access` IAM attachment, `data
+   "aws_elb_service_account"`, the ALB logging bucket and its policy/ACL/ownership controls, and
+   `aws_lambda_layer_version`. AWE-215 — Terraform future-state quarantine was parking all of it
+   under a README promising AWE-155 would restore it, which was false.
+2. **The inherited `apiGateway.tf` is already a REST API (v1)** — `aws_api_gateway_rest_api`,
+   `_deployment`, `_stage`, `_method`, `_integration`, `_domain_name`, `_base_path_mapping` — and
+   `cert.tf` already carries both a regional and a us-east-1 certificate. This was **not** known
+   when the HTTP-API-plus-CloudFront decision was taken earlier the same day; it materially changed
+   the trade-off, so it was surfaced rather than left standing.
+
+**Decisions taken (user-confirmed 2026-08-31)**
+
+- **AWE-155 — Generic webhook ingest switches to REST API + native WAF, regional endpoint.**
+  `aws_wafv2_web_acl_association` binds a `scope = "REGIONAL"` Web ACL directly to the stage ARN.
+  This deletes the CloudFront distribution, the origin-verify header mechanism, the SSM parameter
+  that held its secret, and the whole of the previous AC-03 — that criterion existed *only* because
+  CloudFront leaves the `execute-api` origin publicly reachable. AC-03 now asserts the opposite
+  property: a WAF-blocked request returns 403 **and produces no Lambda invocation**.
+- **Consequence: the `aws.us_east_1` provider alias and `cert.tf`'s `cert-global` are also dead.**
+  Both existed for edge-optimized/CloudFront certificates; a regional endpoint needs neither.
+  AWE-215 deletes them; AWE-151 — IaC: S3 event bucket & delegated DNS is updated to say the alias
+  must not be reintroduced.
+- **Dead Terraform is deleted, not parked.** Terraform has never been applied, so there is no state
+  to migrate and git history is the record. `infra/future-state/` now holds only what AWE-155
+  genuinely restores: `lambda.tf` (minus its layer and `vpc_config`), `cert.tf` (regional only) and
+  `apiGateway.tf`.
+
+**Consequence caught while rewriting:** REST API proxy integration uses **payload format 1.0**, so
+the handler types are `APIGatewayProxyEvent` / `APIGatewayProxyResult`, **not** the `...V2` ones the
+HTTP-API plan specified. The plan's code patterns and `raw-request.ts` task were corrected.
