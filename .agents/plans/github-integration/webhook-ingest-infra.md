@@ -137,24 +137,24 @@ From `.agents/general.md`, `.agents/guidance/aws.md`, `.agents/guidance/api-serv
   dev `@types/aws-lambda`, `tsup`, `vitest`. tsup: `entry: ["src/handler.ts"]`, `format: ["esm"]`,
   `target: "node24"`, `clean: true`, `noExternal: [/.*/ ]` (bundle everything for the zip).
 - `tsconfig.json`, `tsup.config.ts`, `vitest.config.ts`.
-- `src/handler.ts` — `export const handler: APIGatewayProxyHandlerV2` (thin G-C-P orchestrator).
-- `src/raw-request.ts` — `parseRawRequest(event): { path, headers, rawBody }` (base64-aware).
-- `src/webhook-integration.ts` — the `WebhookIntegration` interface (`source`, async
+- `../../../apps/client` — `export const handler: APIGatewayProxyHandlerV2` (thin G-C-P orchestrator).
+- `../../../apps/client` — `parseRawRequest(event): { path, headers, rawBody }` (base64-aware).
+- `../../../apps/client` — the `WebhookIntegration` interface (`source`, async
   `handle(req: RawRequest): Promise<WebhookOutcome>`) + the `WebhookOutcome` union
   (`events` → 2xx / `ack` → 2xx / `unauthorized` → 401 / `bad-request` → 4xx / `server-error` → 5xx).
-- `src/registry.ts` — `IntegrationRegistry = Record<string, WebhookIntegration>`;
+- `../../../apps/client` — `IntegrationRegistry = Record<string, WebhookIntegration>`;
   `integrationFor(path)`. Ships **empty** here; AWE-156 registers `github`.
-- `src/outcome-response.ts` — pure `outcomeToResponse(outcome): APIGatewayProxyResultV2`
+- `../../../apps/client` — pure `outcomeToResponse(outcome): APIGatewayProxyResultV2`
   (Record-keyed on `outcome.status`).
 - **Shared package `packages/event-sink/`** (`@personal-events/event-sink`) —
   `S3EventRepository.putEvents(events: readonly Event[]): Promise<PutEventsResult>`, the **single**
   S3 event-write implementation reused by **both** this Lambda and the AWE-157 poller (DRY — one
   Repository home for S3 event writes). The app depends on it (`workspace:*`); it is **not** an
   app-local file.
-- `src/response.ts` — pure `ok()`/`notFound()`/`badRequest()`/`serverError()` (status + JSON body).
-- `src/config.ts` — env (`EVENT_BUCKET_NAME`, `AWS_REGION`, `ENV`).
-- `src/logger.ts` — winston factory (service `webhook-ingest`).
-- `src/index.ts` — re-export `handler`.
+- `../../../apps/client` — pure `ok()`/`notFound()`/`badRequest()`/`serverError()` (status + JSON body).
+- `../../../apps/client` — env (`EVENT_BUCKET_NAME`, `AWS_REGION`, `ENV`).
+- `../../../apps/client` — winston factory (service `webhook-ingest`).
+- `../../../apps/client` — re-export `handler`.
 - Co-located specs: `handler.spec.ts`, `raw-request.spec.ts`, `s3-event-repository.spec.ts`, `response.spec.ts`.
 
 **Terraform (`infra/personal-events/`):**

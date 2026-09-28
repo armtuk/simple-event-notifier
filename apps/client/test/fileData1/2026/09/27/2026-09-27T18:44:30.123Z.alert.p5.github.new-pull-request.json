@@ -1,0 +1,9 @@
+{
+  "timestamp": "2026-09-27T19:45:30.123Z",
+  "eventType": "alert",
+  "priority": 5,
+  "source": "github",
+  "workItem": "https://github.com/armtuk/aws-auto-dashboard/pull/43",
+  "name": "new-pull-request",
+  "payload" : {}
+}

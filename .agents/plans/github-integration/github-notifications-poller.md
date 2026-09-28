@@ -144,28 +144,28 @@ From `.agents/general.md`, `.agents/guidance/aws.md`, `.agents/guidance/logging.
   Node ≥24 — no HTTP client dep.)
 - `tsconfig.json`, `tsup.config.ts`, `vitest.config.ts`, `Dockerfile` (or rely on Railway
   Railpack auto-detect) + `railway.json` if needed.
-- `src/config.ts` — env Schema (`GITHUB_NOTIFICATIONS_PAT?`, `GITHUB_EVENTS_PAT?`,
+- `../../../apps/client` — env Schema (`GITHUB_NOTIFICATIONS_PAT?`, `GITHUB_EVENTS_PAT?`,
   `GITHUB_USERNAME`, `EVENT_BUCKET_NAME`, `AWS_REGION`, `STATE_KEY`, `NOTIFICATIONS_INTERVAL_MS`,
   `EVENTS_INTERVAL_MS`, `ENV`); per-source enablement.
-- `src/logger.ts` — winston factory.
-- `src/github-http.ts` — authenticated conditional-`fetch` helper (base URL, auth header,
+- `../../../apps/client` — winston factory.
+- `../../../apps/client` — authenticated conditional-`fetch` helper (base URL, auth header,
   `If-Modified-Since`/`If-None-Match`, parse `Last-Modified`/`ETag`/`X-Poll-Interval`/`Retry-After`).
-- `src/notifications-repository.ts` — `GithubNotificationsRepository.poll(cursor): Promise<PollResult>`.
-- `src/events-repository.ts` — `GithubEventsRepository.poll(cursor): Promise<PollResult>`.
-- `src/poller-state-repository.ts` — `PollerStateRepository.load()/save(state)` (S3 JSON object).
-- `src/dedupe.ts` — pure `partitionFresh(items, seen, keyOf): { fresh, nextSeen }` (bounded).
-- `src/backoff.ts` — pure `nextDelayMs(attempt, base, xPollInterval, retryAfter)`.
-- `src/source-poller.ts` — generic self-scheduling loop `runSourcePoller(opts)` (mechanics only).
-- `src/notifications-cycle.ts` / `src/events-cycle.ts` — one cycle: fetch→normalize→transform→dedupe→persist→save.
-- `src/daemon.ts` — wire config → repos → start enabled sources → signal handling.
-- `src/index.ts` — entrypoint (`daemon.start()`).
+- `../../../apps/client` — `GithubNotificationsRepository.poll(cursor): Promise<PollResult>`.
+- `../../../apps/client` — `GithubEventsRepository.poll(cursor): Promise<PollResult>`.
+- `../../../apps/client` — `PollerStateRepository.load()/save(state)` (S3 JSON object).
+- `../../../apps/client` — pure `partitionFresh(items, seen, keyOf): { fresh, nextSeen }` (bounded).
+- `../../../apps/client` — pure `nextDelayMs(attempt, base, xPollInterval, retryAfter)`.
+- `../../../apps/client` — generic self-scheduling loop `runSourcePoller(opts)` (mechanics only).
+- `../../../apps/client` / `../../../apps/client` — one cycle: fetch→normalize→transform→dedupe→persist→save.
+- `../../../apps/client` — wire config → repos → start enabled sources → signal handling.
+- `../../../apps/client` — entrypoint (`daemon.start()`).
 - Co-located specs for `dedupe`, `backoff`, `config`, each repository, each cycle, `source-poller`.
 
 **Shared package extension (`packages/github/`):**
-- `src/events-api.ts` — `EventsApiItemSchema` (`id`, `type`, `actor`, `repo`, `payload.action?`, `created_at`).
-- finalize `EventsApiTriggerSchema` (`{ channel: "events_api", type, action? }`) in `src/github-trigger.ts`.
-- `normalizeEventsApi` added to `src/normalizer.ts`.
-- add `events_api` rules to `src/github-mapping.json` (e.g. `PullRequestEvent`+`review_requested`,
+- `../../../apps/client` — `EventsApiItemSchema` (`id`, `type`, `actor`, `repo`, `payload.action?`, `created_at`).
+- finalize `EventsApiTriggerSchema` (`{ channel: "events_api", type, action? }`) in `../../../apps/client`.
+- `normalizeEventsApi` added to `../../../apps/client`.
+- add `events_api` rules to `../../../apps/client` (e.g. `PullRequestEvent`+`review_requested`,
   `PushEvent`, `ReleaseEvent`); plus exemplars `events-api-*.json`.
 
 **Terraform (`infra/personal-events/`):**

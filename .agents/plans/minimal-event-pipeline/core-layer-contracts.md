@@ -168,7 +168,7 @@ wire shape can leak above the Repository boundary.
 
 ### Patterns to follow
 
-- **Mapping config** (`src/mapping-config.ts`):
+- **Mapping config** (`../../../apps/client`):
   ```ts
   import { Schema } from "effect"
   import { NoDotString, Priority } from "@personal-events/event-model"
@@ -187,7 +187,7 @@ wire shape can leak above the Repository boundary.
   })
   export type MappingConfig = typeof MappingConfigSchema.Type
   ```
-- **Classifier** (`src/classify.ts`) — a `Record` lookup with an explicit default, then re-validate:
+- **Classifier** (`../../../apps/client`) — a `Record` lookup with an explicit default, then re-validate:
   ```ts
   export interface Classified { readonly event: Event; readonly usedDefault: boolean }
 
@@ -214,7 +214,7 @@ wire shape can leak above the Repository boundary.
       )
     }
   ```
-- **Repository contract** (`src/event-repository.ts`) — the tag only, no implementation:
+- **Repository contract** (`../../../apps/client`) — the tag only, no implementation:
   ```ts
   export interface PutOutcome { readonly _tag: "Created" | "AlreadyExists"; readonly key: string }
 
@@ -226,7 +226,7 @@ wire shape can leak above the Repository boundary.
     }
   >() {}
   ```
-- **Errors** (`src/errors.ts`):
+- **Errors** (`../../../apps/client`):
   ```ts
   export class ClassificationError extends Schema.TaggedError<ClassificationError>()(
     "ClassificationError", { trigger: Schema.String, detail: Schema.String }
@@ -262,7 +262,7 @@ Execute in order, top to bottom.
   consume the types.
 - **VALIDATE**: `pnpm install && pnpm --filter @personal-events/core build`
 
-#### CREATE `src/errors.ts`
+#### CREATE `../../../apps/client`
 - **IMPLEMENT**: `TransformError`, `ClassificationError`, `ConfigParseError`, `ConfigReadError`,
   `EventWriteError` as `Schema.TaggedError` subclasses, each carrying the fields needed to diagnose
   it without a stack trace.
@@ -270,7 +270,7 @@ Execute in order, top to bottom.
   AWE-213's implementation.
 - **VALIDATE**: `pnpm --filter @personal-events/core typecheck`
 
-#### CREATE `src/normalized-event.ts` + `src/mapping-config.ts`
+#### CREATE `../../../apps/client` + `../../../apps/client`
 - **IMPLEMENT**: both schemas and derived types, importing `Priority`/`NoDotString`/`IsoInstant` from
   `@personal-events/event-model`.
 - **GOTCHA — the cross-story contract**: if AWE-150 has not exported those field schemas, **stop and
@@ -279,7 +279,7 @@ Execute in order, top to bottom.
   `Schema.optionalWith(..., { exact: true })` for `name` and `workItem`.
 - **VALIDATE**: `pnpm --filter @personal-events/core typecheck`
 
-#### CREATE `src/classify.ts`
+#### CREATE `../../../apps/client`
 - **IMPLEMENT**: `Classified` and the curried `classify` exactly as in Patterns.
 - **IMPORTS**: `{ Either, pipe }` from `"effect"`; `parseEvent`, `type Event` from
   `@personal-events/event-model`.
@@ -287,13 +287,13 @@ Execute in order, top to bottom.
   that is intentional and drives both the `??` fallback and the `usedDefault` flag.
 - **VALIDATE**: `pnpm --filter @personal-events/core test classify`
 
-#### CREATE `src/transformer.ts` + `src/event-repository.ts`
+#### CREATE `../../../apps/client` + `../../../apps/client`
 - **IMPLEMENT**: the `Transformer<Raw>` interface and the `EventRepository` `Context.Tag`.
 - **GOTCHA**: **types and tags only — no implementations.** An implementation appearing here is the
   same mistake the dropped `SourceAdapter` made.
 - **VALIDATE**: `pnpm --filter @personal-events/core typecheck`
 
-#### CREATE `src/config-file.ts` (the only I/O)
+#### CREATE `../../../apps/client` (the only I/O)
 - **IMPLEMENT**: `readMappingConfig(path)` returning
   `Effect<MappingConfig, ConfigReadError | ConfigParseError, FileSystem>` — read the file, parse the
   JSON, decode via `Schema.decodeUnknownEither(MappingConfigSchema, { errors: "all" })`, and map the
@@ -303,7 +303,7 @@ Execute in order, top to bottom.
 - **GOTCHA**: keep this module free of classification logic — it Gathers and validates, nothing more.
 - **VALIDATE**: `pnpm --filter @personal-events/core test config-file`
 
-#### CREATE `src/index.ts`
+#### CREATE `../../../apps/client`
 - **IMPLEMENT**: re-export the schemas, derived types, `classify`, `Classified`, `Transformer`,
   `EventRepository`, `PutOutcome`, `readMappingConfig`, and every error class.
 - **VALIDATE**: `pnpm --filter @personal-events/core build`

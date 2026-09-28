@@ -215,7 +215,7 @@ From `.agents/general.md`, `.agents/languages/typescript/*`, `.agents/frameworks
   `name = toDotSafe(reason)`.
 - **Errors** (`Schema.TaggedError`): `GithubNormalizeError({ channel, eventName?, reason })`,
   `GithubValidationError`.
-- **Mapping JSON** (`src/github-mapping.json`) — channel-discriminated rules + default, e.g.:
+- **Mapping JSON** (`../../../apps/client`) — channel-discriminated rules + default, e.g.:
   ```json
   {
     "integration": "github",

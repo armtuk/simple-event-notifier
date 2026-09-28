@@ -111,7 +111,7 @@ From `.agents/general.md`, `.agents/guidance/aws.md`, `.agents/guidance/logging.
 ### Files to read — READ THESE BEFORE IMPLEMENTING
 - `apps/webhook-ingest/src/webhook-integration.ts` (AWE-155) — Why: the `WebhookIntegration` /
   `WebhookOutcome` contract to implement.
-- `apps/webhook-ingest/src/s3-event-repository.ts` + `src/registry.ts` (AWE-155) — Why: the
+- `apps/webhook-ingest/src/s3-event-repository.ts` + `../../../apps/client` (AWE-155) — Why: the
   injected repository and where to register `github`.
 - `apps/webhook-ingest/infra` files `lambda.tf` (AWE-155) — Why: extend the IAM role with
   `ssm:GetParameter`; add the SSM parameter + the `deliveries/` lifecycle rule.
@@ -122,12 +122,12 @@ From `.agents/general.md`, `.agents/guidance/aws.md`, `.agents/guidance/logging.
 
 ### Files to create / change
 **Ingest app (`apps/webhook-ingest/`):**
-- `src/integrations/github/github-integration.ts` — `GithubWebhookIntegration implements WebhookIntegration`.
-- `src/integrations/github/webhook-secret-repository.ts` — `WebhookSecretRepository` (SSM GetParameter, memoized).
-- `src/integrations/github/delivery-dedupe-repository.ts` — `DeliveryDedupeRepository` (S3 Head/Put markers).
-- `src/integrations/github/register.ts` — constructs deps and registers `github` into the registry.
-- `src/integrations/github/setup.md` — operator setup note (webhook config + permissions + secret).
-- Update `src/registry.ts` — register the github integration (or expose a `registerDefault()` the handler calls at init).
+- `../../../apps/client` — `GithubWebhookIntegration implements WebhookIntegration`.
+- `../../../apps/client` — `WebhookSecretRepository` (SSM GetParameter, memoized).
+- `../../../apps/client` — `DeliveryDedupeRepository` (S3 Head/Put markers).
+- `../../../apps/client` — constructs deps and registers `github` into the registry.
+- `../../../apps/client` — operator setup note (webhook config + permissions + secret).
+- Update `../../../apps/client` — register the github integration (or expose a `registerDefault()` the handler calls at init).
 - Update `package.json` — add deps `@octokit/webhooks-methods@^6.0.0`, `@aws-sdk/client-ssm`.
 - Co-located specs: `github-integration.spec.ts`, `delivery-dedupe-repository.spec.ts`, `webhook-secret-repository.spec.ts`.
 

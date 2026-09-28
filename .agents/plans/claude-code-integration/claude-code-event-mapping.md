@@ -123,7 +123,7 @@ with no transport or AWS concerns mixed in, reusing the same template GitHub and
 - **TS house style**: no semicolons, double quotes, width 140, arrow functions, `.ts` imports.
 
 ### Files to read — READ THESE BEFORE IMPLEMENTING
-- **`@personal-events/integration-core` actual exports** (the built AWE-153 package — `src/index.ts`
+- **`@personal-events/integration-core` actual exports** (the built AWE-153 package — `../../../apps/client`
   and its config-schema + `transform` + `SourceAdapter`/`SecondaryProcessor` interfaces) — Why: the
   exact contract this package must conform to (config shape, trigger union, transform inputs). This
   is the single most important read; AWE-153's `.agents/plans/github-integration/integration-framework.md`

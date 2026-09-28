@@ -129,7 +129,7 @@ before any webhook ingest exists.
 - `apps/desktop-notifier/src/notification-content.ts` — **pure** `toNotification(event)`.
 - `apps/desktop-notifier/src/notify.ts` — `NotifierAdapter` interface + `ToastedNotifierAdapter`
   + `ShellNotifierAdapter` (osascript/notify-send/SnoreToast) + `createNotifier()` factory.
-- `apps/desktop-notifier/src/daemon.ts` + `src/index.ts` — the self-scheduling loop + entry.
+- `apps/desktop-notifier/src/daemon.ts` + `../../../apps/client` — the self-scheduling loop + entry.
 - Spec files co-located (`*.spec.ts`) + `exemplars/` event JSON.
 
 ### Relevant documentation

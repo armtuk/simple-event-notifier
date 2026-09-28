@@ -1,20 +1,23 @@
 {
-  "name": "aws-work-eventer",
+  "name": "aws-simple-eventer",
   "version": "0.0.1",
+  "packageManager": "pnpm@11.21.0",
   "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "devEngines": {
-    "packageManager": {
-      "name": "pnpm",
-      "version": "^11.10.0",
-      "onFail": "download"
-    }
+  "author": "Alex Turner <alex@fifthdimensionengineering.com",
+  "license": "NONE",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
   },
-  "type": "module"
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.0",
+    "turbo": "2.9.18",
+    "typescript": "7.0.2",
+    "vitest": "^5.0.2"
+  }
 }

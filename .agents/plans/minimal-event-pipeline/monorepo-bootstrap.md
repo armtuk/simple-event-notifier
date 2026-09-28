@@ -116,7 +116,7 @@ reinventing its own.
   `*.tfstate*`, `.terraform.lock.hcl` is **kept** (committed).
 - `.nvmrc` / `.node-version` — `24`.
 - `packages/_placeholder/` (or fold into the real `event-model` package later) — a minimal
-  package with `src/index.ts`, a passing `*.spec.ts`, its own `tsconfig.json` (extends base),
+  package with `../../../apps/client`, a passing `*.spec.ts`, its own `tsconfig.json` (extends base),
   `tsup.config.ts`, and `package.json`, **solely to make `build`/`test` real and green**. Note
   in the PR that AWE-150 replaces/augments this with the actual event-model package.
 
@@ -175,8 +175,8 @@ Execute in order. Each is independently validatable.
 #### CREATE placeholder package to make the pipeline real
 - **IMPLEMENT**: `packages/_placeholder` with `package.json` (scope `@personal-events/`,
   `type: module`, build=tsup, test=vitest, typecheck=tsc --noEmit), `tsconfig.json`
-  (extends base, composite), `tsup.config.ts` (esm, dts, target node24), `src/index.ts`
-  exporting a trivial function, and `src/index.spec.ts` asserting it.
+  (extends base, composite), `tsup.config.ts` (esm, dts, target node24), `../../../apps/client`
+  exporting a trivial function, and `../../../apps/client` asserting it.
 - **PATTERN**: `tsup.config.ts` / `vitest.config.ts` from the exemplar.
 - **GOTCHA**: per-package `vitest.config.ts` uses `defineProject` with a unique `name`.
 - **VALIDATE**: `pnpm build && pnpm test && pnpm lint && pnpm typecheck` (all green).
