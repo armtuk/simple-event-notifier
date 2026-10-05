@@ -2,12 +2,12 @@
 id: AWE-151
 title: "IaC: S3 event bucket & Route53 delegated zone (Terraform)"
 type: story
-status: Pending
+status: Implementation Adjustment
 parent: ./feature.md
 branch: feat/bootstrap-and-iac
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-28
-updated: 2026-06-28
+updated: 2026-07-19
 ---
 
 # Story: IaC — S3 event bucket & Route53 delegated zone (Terraform)
@@ -217,3 +217,142 @@ Execute in order.
   `dig +short NS personal-events.fifthdimensionengineering.com`
 - Level 4 — Drift check: a second `terraform -chdir=infra/personal-events plan` reports
   "No changes."
+
+## Execution notes (2026-07-19)
+
+Deltas from the plan as written, and why:
+
+- **Layout is `infra/bootstrap/` + `infra/personal-events/`** as planned, with an extra `locals.tf`
+  in each (the derived bucket names and the merged tag map have their own axis of change from the
+  input variables). `s3.tf` is named `state-bucket.tf` in the bootstrap module — it creates the
+  state bucket, not the event bucket, and the filename should say so.
+- **Terraform CLI in use is 1.15.7**; `required_version = ">= 1.11, < 2.0"` as planned.
+  AWS provider resolved under `~> 6.0`. `.terraform.lock.hcl` is committed for both modules.
+- **The backend is configured but deliberately not wired to a real bucket.** `personal-events/backend.tf`
+  carries only the non-environment-specific settings (`key`, `encrypt`, `use_lockfile`); the bucket
+  and region arrive at init time via `-backend-config=backend.hcl` (a `.example` is committed, the
+  real file is gitignored). The bootstrap module's own backend ships as `backend.tf.example` so a
+  clean checkout can run `terraform init -backend=false && terraform validate` with no AWS account
+  behind it. **No DynamoDB lock table** — native S3 locking, as resolved during planning.
+- **`aws_s3_bucket_ownership_controls` with `BucketOwnerEnforced` added** to both buckets. Not in
+  the plan; it disables ACLs entirely, which is the current AWS default posture and closes the ACL
+  vector that `block_public_acls` only partly covers.
+- **`default_tags` on the provider** rather than a `tags` argument repeated on every resource — one
+  place to change, and it covers resources added later for free.
+- **Retention as resolved:** current versions tier to STANDARD_IA at 90d and GLACIER_IR at 365d and
+  **never expire**; noncurrent versions keep the newest 5 and expire after
+  `var.noncurrent_version_retention_days` (180); incomplete multipart uploads abort after 7d. Every
+  rule carries a `filter {}` and the lifecycle config `depends_on` the versioning resource.
+- **ADR written to `docs/decisions/2026-07-19-1900-iac-foundation/`** (the canonical location in
+  `.agents/guidance/adr.md`), not to a `.agents/plans/.../adr/` directory as the plan's file list
+  suggested. Indexed in the root `README.md`.
+- **Acceptance-criterion wording superseded:** the Definition says "a DynamoDB lock table". The
+  implementation uses native S3 locking (`use_lockfile`). Recommend the user amend the criterion.
+- `shellcheck` is not installed on this machine, and no shell scripts were written — the `infra`
+  member's wrapper is `package.json` scripts calling `terraform` directly, so there is nothing for
+  it to check.
+
+## Deferred verification — NOT met under the code-and-dry-run fence
+
+This story was executed under an explicit constraint: **no command that creates, modifies, or
+deletes real AWS resources.** The following acceptance criteria therefore remain **unverified**.
+They are not failures and they are not met — they are untested.
+
+| Acceptance criterion | Status | Command the user must run to close it |
+| :--- | :--- | :--- |
+| `terraform apply` creates the event bucket and the delegated zone | **Unverified** | `terraform -chdir=infra/personal-events apply` (after the bootstrap runbook in `infra/README.md`) |
+| Querying the parent zone returns an `NS` record delegating `personal-events.fifthdimensionengineering.com` | **Unverified** | `dig +short NS personal-events.fifthdimensionengineering.com` |
+| A second `plan` after `apply` shows no drift | **Unverified** | `terraform -chdir=infra/personal-events plan` → expect "No changes." |
+| Bucket versioning / public-access-block / SSE are actually set on the live bucket | **Unverified** | `aws s3api get-bucket-versioning`, `get-public-access-block`, `get-bucket-encryption` |
+| Re-apply is idempotent | **Unverified** | a second `terraform apply` |
+| Remote state initializes against the S3 backend with `use_lockfile` | **Unverified** | the bootstrap runbook, then `terraform init -backend-config=backend.hcl` |
+| A non-existent parent zone fails the plan with an actionable message | **Unverified** | `terraform -chdir=infra/personal-events plan -var parent_zone_name=does-not-exist.example` |
+| Missing/incorrect credentials fail with a clear error | **Unverified** | `AWS_PROFILE=nope terraform -chdir=infra/personal-events plan` |
+
+**No NS records were written into the live `fifthdimensionengineering.com` zone.**
+
+### What WAS verified
+
+- `terraform fmt -check -recursive` clean across both modules (also runs as the `infra` member's
+  turbo `lint` task).
+- `terraform -chdir=<root> init -backend=false -input=false && terraform -chdir=<root> validate` —
+  **Success** for both `bootstrap/` and `personal-events/`, from a clean checkout with `.terraform/`
+  removed. This is exactly what `pnpm --filter @personal-events/infra validate` runs.
+- **A real, clean `terraform plan`.** Run against a scratch copy of `personal-events/` with
+  `backend.tf` removed (so local state was used and the non-existent remote-state bucket was not
+  touched): `Plan: 8 to add, 0 to change, 0 to destroy` with **no errors**. Nothing was applied.
+  - The `data "aws_route53_zone" "parent"` lookup **resolved against the real account**
+    (zone id `Z022596723T54QKGKXEYR`), so the parent zone exists, is readable by the configured
+    credentials, and `aws_route53_record.system_delegation` is correctly targeted at it.
+  - Planned resources: the bucket plus its public-access-block, ownership-controls, versioning,
+    SSE, and lifecycle configurations; the child hosted zone; and the parent-zone NS record.
+  - Computed outputs resolved as expected —
+    `event_bucket_name = "events.prod.personal-events.fifthdimensionengineering.com"`,
+    `system_domain = "personal-events.fifthdimensionengineering.com"`.
+
+
+## R1 review fixes (2026-07-19)
+
+Applied after the independent R1 pass (`claude-automated-code-review.md` → `## R1 — 2026-07-19`).
+
+- **#8 MINOR (dry-wet) — the six-resource hardened-bucket block was duplicated** across
+  `bootstrap/state-bucket.tf` and `personal-events/s3.tf`, along with a byte-identical `versions.tf`.
+  The axis of change is "how we harden an S3 bucket", and it changed in two places. Extracted
+  `infra/modules/hardened-bucket/`, parameterized by `bucket_name`, `transitions`,
+  `noncurrent_version_retention_days`, `newer_noncurrent_versions_kept`, and
+  `abort_incomplete_upload_days`; both roots now call it. The bootstrap module uses it too — its
+  bootstrapping constraint is about *Terraform state*, not module resolution, and a local module
+  directory is just files on disk. That reasoning is now a comment in `state-bucket.tf` rather than
+  left implicit.
+  - Resource addresses moved to `module.event_log.*` / `module.state.*`. **No state exists yet, so no
+    `terraform state mv` is required** — but if this branch is ever rebased onto an applied state, a
+    `state mv` per resource is the migration. The bootstrap root's lifecycle **rule id** also changed,
+    from `trim-superseded-state-versions` to the module's `trim-superseded-versions`; the retention
+    values are identical, and because a rule id is a child of `aws_s3_bucket_lifecycle_configuration`
+    it is an in-place update of that resource, not a destroy.
+  - **Re-planned after the refactor:** still `Plan: 8 to add, 0 to change, 0 to destroy`, the same
+    eight resources, the same parent-zone lookup (`Z022596723T54QKGKXEYR`), and — in the
+    `personal-events` root — all three lifecycle rules intact (`tier-current-versions` 90d→STANDARD_IA / 365d→GLACIER_IR, `trim-superseded-versions`
+    keep-5 / 180d, `abort-incomplete-uploads` 7d).
+- **#16 MINOR (docs) — `infra/README.md` claimed `pnpm … validate` was an offline check; it was not.**
+  The script was a bare `terraform validate` with no `init`, which fails on a clean checkout
+  (`.terraform/` is gitignored) with *"Module not installed"*, and `bootstrap` had no `validate`
+  script at all despite this story claiming both modules validate. Both scripts now run
+  `init -backend=false -input=false` first, `validate` covers **both** roots, and `lint` is a single
+  recursive `fmt -check` that also covers the new shared module. Verified from a clean checkout with
+  `.terraform/` deleted.
+- **#17 NIT — two deferred-verification commands omitted `-chdir`** and so would have failed from the
+  repo root for the wrong reason. Corrected above; the table is now copy-pasteable.
+- **#20 NIT — dotted bucket names force path-style addressing.** Not a deviation (it follows
+  `.agents/guidance/aws.md` exactly), but now recorded as a conscious trade-off in the ADR's
+  "Accepted trade-off: dotted bucket names" section rather than left implicit.
+
+**Nothing in this round changed the fence position:** no `terraform apply`, no AWS resource created,
+no NS record written into the live `fifthdimensionengineering.com` zone. Every row in the
+"Deferred verification" table above still stands as written.
+
+## R2 review fixes (2026-07-19)
+
+Applied after the independent R2 pass (`claude-automated-code-review.md` → `## R2 — 2026-07-19`).
+
+- **R2-5 MINOR — `infra/modules/hardened-bucket` accepted any input.** The module the R1 #8 refactor
+  created had no `validation` blocks at all, so a bad value would have failed at apply time against
+  real AWS rather than at `terraform validate` — the opposite of what a shared module is for. All
+  five inputs are now validated (seven blocks), including an S3 bucket-name grammar and its
+  IP-address exclusion. The `bootstrap` root also gained the `env` validation `personal-events`
+  already had.
+- **R2-6 — the `env` variable's accepted set** is now `["local","dev","qa","staging","prod"]` in both
+  roots, identical to the TypeScript side's `Schema.Literal`. `CLAUDE.md` § Documented carve-outs
+  states the vocabulary once and both halves point back at it.
+
+**No resource changed.** `validation` blocks are plan-invisible, so `Plan: 8 to add, 0 to change,
+0 to destroy` still holds, and the fence position is unchanged: no `terraform apply`, no AWS resource
+created, no NS record written into the live `fifthdimensionengineering.com` zone.
+
+## R3 review fixes (2026-07-19)
+
+- **R3-7 NIT — `newer_noncurrent_versions_kept >= 0` admitted `0`**, which S3 rejects
+  (`newer_noncurrent_versions` must be 1–100), against the module header's own promise that a bad
+  value fails `terraform validate` rather than half-creating a bucket. The condition is now
+  `>= 1 && <= 100 &&` whole-number. Both call sites already pass 5 and 20, so nothing changed in the
+  plan.

@@ -1,0 +1,5 @@
+{
+  "integration": "example",
+  "rules": [],
+  "default": { "eventType": "alert", "priority": 8 }
+}

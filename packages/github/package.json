@@ -1,0 +1,40 @@
+{
+  "name": "@personal-events/github",
+  "version": "0.0.1",
+  "description": "The GitHub instance of the integration template: payload schemas, mapping config, and normalizers",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/exemplars.d.ts",
+      "default": "./dist/testing/exemplars.js"
+    },
+    "./exemplars/*": "./exemplars/*"
+  },
+  "files": ["dist", "exemplars"],
+  "scripts": {
+    "build": "tsup",
+    "lint": "biome check src/",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@personal-events/event-model": "workspace:*",
+    "@personal-events/integration-core": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "catalog:",
+    "@octokit/openapi-webhooks-types": "catalog:",
+    "@types/node": "catalog:",
+    "tsup": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

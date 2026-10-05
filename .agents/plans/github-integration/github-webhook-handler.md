@@ -2,12 +2,12 @@
 id: AWE-156
 title: GitHub webhook handler (signature verify → S3)
 type: story
-status: Pending
+status: Implementation Adjustment
 parent: ./feature.md
 branch: github-integration
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-28
-updated: 2026-06-29
+updated: 2026-07-19
 ---
 
 # Story: GitHub webhook handler (signature verify → S3)
@@ -261,3 +261,102 @@ From `.agents/general.md`, `.agents/guidance/aws.md`, `.agents/guidance/logging.
 - Level 2: `pnpm --filter @personal-events/webhook-ingest typecheck`
 - Level 3: `pnpm --filter @personal-events/webhook-ingest test`
 - Level 4 (deploy-gated): `terraform -chdir=infra/personal-events apply`; signed `curl` smoke + dedupe re-post; confirm object in bucket.
+
+## Plan refresh (2026-07-19) — what changed between planning and execution
+
+| Planned assumption | Reality | Action |
+| :--- | :--- | :--- |
+| Dedupe markers live at `deliveries/github/{id}` **in the event bucket**, with a lifecycle rule expiring the prefix | **this would have been a catastrophic, silent bug** — see below | Markers live in a **separate operational-state bucket**; the prefix expiry moved with them |
+| `S3EventRepository` and `registry.ts` are edited to register github | AWE-155 shipped a composition root and a value-based registry | `register.ts` is an `IntegrationFactory`; `registry.ts` is untouched |
+| `githubToEvent` is called, then "the normalizer/transform can surface *used default*" | `githubToEvent` composes normalize+transform and returns only the event | The integration calls `normalizeWebhook` then `transform` explicitly, so it holds the **trigger** and asks `classify` whether a rule matched. Rebuilding the trigger from the body would have duplicated the normalizer's extraction rules |
+| the ingest app has `src/s3-event-repository.ts` | it is in `packages/event-sink` | Injected, as AWE-155 built it |
+
+### ⚠️ The story's dedupe-marker location was a silent-total-loss bug
+
+The resolved decision put delivery markers under a `deliveries/` prefix **in the event bucket**.
+`apps/desktop-notifier/src/poller.ts` lists that bucket with `ListObjectsV2` `StartAfter` and **no
+prefix filter**, then `advanceMark` moves its high-water mark to the **highest key it saw**. Event
+keys lead with a year, `"2026-…"`; `"deliveries/…"` starts with `d`, which sorts above every digit.
+
+So the first poll that saw a single marker would push the consumer's mark above every event key that
+will ever exist — and the desktop notifier would **never deliver another event**, permanently, with
+no error anywhere. AWE-157's planned `state/github-poller.json` has exactly the same property
+(`s` > `2`).
+
+Both now live in `state.{env}.{system_domain}`, a second `hardened-bucket` with prefix expiry
+(`infra/personal-events/state-bucket.tf`). The reasoning is recorded at three sites so it cannot be
+"simplified" back: the Terraform file, `delivery-dedupe-repository.ts`'s docblock, and
+`infra/README.md` § "Two buckets, and why they must stay two". A spec asserts the repository writes
+to the state bucket.
+
+This is **not** the same defect as the open delivery-semantics question — it is a new one this story
+would have introduced, and it is fixed rather than recorded.
+
+### Other design decisions taken during implementation
+
+- **A failed secret read is not cached.** The plan's `this.cached ??= this.fetch()` memoizes the
+  rejected promise, so one transient SSM blip would make the function answer **500** to every delivery
+  until AWS recycled the environment (a `secrets.get()` rejection propagates out of `handle` to the
+  router's catch). A 500 is visible in GitHub's delivery log and hand-redeliverable, so it is not
+  silent loss — but making a whole warm environment fail over one blip is still wrong, so the memo is
+  cleared on failure and the next delivery retries the read; a spec pins it. *(R1-11 corrected the
+  earlier "401" claim in the docblock and here.)*
+- **An empty secret is rejected.** A SecureString sitting at Terraform's placeholder, or blanked,
+  would otherwise be used to verify every signature.
+- **A missing `X-GitHub-Delivery` is a 400, not a best-effort write.** The plan left this open
+  ("log + still process, or 4xx — assert the chosen behavior"). Writing an event that cannot be
+  deduped means an operator's redelivery silently doubles it; refusing is the honest answer, and
+  nothing but GitHub posts to this route.
+- **Ping is checked before dedupe**, so a ping does not burn a marker for an event that never
+  existed; **dedupe is checked before any work**, so a redelivery costs one `HeadObject`.
+- **An invalid mapping config disables the GitHub integration rather than crashing the function.** A
+  config typo would otherwise take down every provider, including ones whose config is fine.
+- **IAM is a second role policy**, not an edit to AWE-155's: the generic ingest's permissions and one
+  integration's permissions have different reasons to change. It is scoped to the delivery prefix,
+  not the whole state bucket — the ingest has no business reading a poller cursor.
+
+## Deferred verification — NOT met under the code-and-dry-run fence
+
+The fence forbids `terraform apply`, creating any AWS resource, registering a real webhook against a
+real repository, and using a real credential. These criteria are therefore **unverified** — not
+failed, untested.
+
+| Acceptance criterion | Status | Command or step the user must run to close it |
+| :--- | :--- | :--- |
+| A configured GitHub webhook delivers an event that is HMAC-verified and written to S3 | **Unverified** | `terraform -chdir=infra/personal-events apply`, then steps 1–3 of `apps/webhook-ingest/src/integrations/github/setup.md`, then open a PR and look for `github delivery written` in `aws logs tail` |
+| The webhook secret is stored in SSM and read by the Lambda | **Unverified** | `aws ssm put-parameter --name "$(terraform -chdir=infra/personal-events output -raw github_webhook_secret_parameter)" --type SecureString --value "$(openssl rand -hex 32)" --overwrite`, then confirm a signed delivery succeeds |
+| An invalid signature is rejected with 401 and logged, against the deployed endpoint | **Unverified** | `curl -i -XPOST "$(terraform -chdir=infra/personal-events output -raw github_webhook_url)" -H 'X-GitHub-Event: push' -H 'X-Hub-Signature-256: sha256=deadbeef' -d '{}'` → expect 401 |
+| `X-GitHub-Delivery` dedupe prevents a double write on a real redelivery | **Unverified** | GitHub → Settings → Webhooks → Recent Deliveries → **Redeliver**; expect `200 {"acknowledged":"duplicate delivery"}` and **one** object in the bucket |
+| A 2xx is returned within GitHub's ~10 s delivery timeout | **Unverified** | read the `REPORT` line's `Duration` in the function's CloudWatch log after a real delivery |
+| The `deliveries/` lifecycle rule actually expires markers after 7 days | **Unverified** | `aws s3api get-bucket-lifecycle-configuration --bucket "$(terraform -chdir=infra/personal-events output -raw state_bucket_name)"` |
+| The permission required (repo `admin:repo_hook` / org owner) is what GitHub actually demands | **Unverified** | attempt the setup as a non-admin and confirm the Webhooks tab is absent — documented from GitHub's docs, not exercised |
+| An S3 write failure surfaces as 5xx **and** leaves no dedupe marker, end to end | **Unverified** | temporarily remove the `WriteEvents` IAM statement, apply, deliver, then confirm 5xx and that **Redeliver** writes the event once the permission is restored |
+
+**No AWS resource was created. No webhook was registered against any repository. No PAT or webhook
+secret was requested, invented, or used. Nothing was applied or deployed.**
+
+### What WAS verified
+
+- **A real HMAC, end to end in the specs.** Signatures are produced by `@octokit/webhooks-methods`
+  `sign` and checked by the same package's `verify` — no crypto is stubbed. A genuine signature
+  passes; a signature from a different secret, a signature over a body altered afterwards, a
+  malformed header, and a missing header are each rejected with nothing written and the dedupe store
+  never consulted. Neither the secret nor the signature appears in any captured log record.
+- **The full outcome matrix** over real exemplar bodies: mapped event → written and classified from
+  config; unmapped event → written under the default with a `warn` naming the match key an operator
+  would add; `ping` → ack, no write, no marker; redelivery → ack, no second write; malformed JSON →
+  400; schema-invalid body → 400 with the offending field named; S3 failure → 5xx **and no marker
+  recorded**; a non-`NotFound` dedupe error rejects rather than reading as "not seen".
+- **A real, clean `terraform plan`** on a scratch copy with `backend.tf` removed:
+  **`Plan: 32 to add, 0 to change, 0 to destroy`** — AWE-155's 24 plus the state bucket's six, the
+  SSM parameter, and the second IAM role policy. `terraform validate` Success, `fmt -check` clean.
+- **102 specs** in `apps/webhook-ingest` (52 from AWE-155 + 50 here).
+
+### Validation actually run
+
+| Level | Command | Result |
+| :--- | :--- | :--- |
+| 1 — style | `pnpm --filter @personal-events/webhook-ingest lint` | clean |
+| 2 — types | `pnpm --filter @personal-events/webhook-ingest typecheck` | clean |
+| 3 — specs | `pnpm --filter @personal-events/webhook-ingest test` | 102 passed |
+| 4 — infra | `terraform fmt -check -recursive infra`, `validate` both roots, scratch `plan` | clean / Success / 32 to add |

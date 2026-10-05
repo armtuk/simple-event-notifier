@@ -1,0 +1,19 @@
+{
+  "name": "@personal-events/infra",
+  "version": "0.0.1",
+  "description": "Terraform for the personal-events AWS substrate (S3 event bucket, delegated Route53 zone, and the webhook ingest)",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "terraform fmt -check -recursive .",
+    "format": "terraform fmt -recursive .",
+    "validate": "pnpm run validate:personal-events && pnpm run validate:bootstrap",
+    "validate:personal-events": "terraform -chdir=personal-events init -backend=false -input=false && terraform -chdir=personal-events validate",
+    "validate:bootstrap": "terraform -chdir=bootstrap init -backend=false -input=false && terraform -chdir=bootstrap validate",
+    "plan": "terraform -chdir=personal-events plan",
+    "deploy": "terraform -chdir=personal-events apply"
+  },
+  "devDependencies": {
+    "@personal-events/webhook-ingest": "workspace:*"
+  }
+}

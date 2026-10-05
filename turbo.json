@@ -1,0 +1,71 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "ui": "stream",
+  "globalDependencies": ["tsconfig.base.json", "biome.json", "pnpm-workspace.yaml"],
+  "tasks": {
+    // An explicit `inputs` array REPLACES turbo's default of all git-tracked package files, so
+    // anything a task genuinely depends on must be listed. `exemplars/**` is in `build.inputs`
+    // because @personal-events/event-model publishes its exemplars (its `files`/`exports` say so):
+    // they are part of what a consumer builds against, so editing one must invalidate the
+    // consumer's cached test run. Without it a drifted contract exemplar replays a cached PASS for
+    // the consumer -- exactly the silent drift the shared-exemplar change exists to prevent.
+    "build": {
+      "dependsOn": ["^build"],
+      "inputs": ["src/**", "exemplars/**", "tsup.config.ts", "tsconfig.json", "package.json"],
+      "outputs": ["dist/**"]
+    },
+    // `*.config.ts` is here because each package's tsconfig `include` lists it, so `tsc --noEmit`
+    // genuinely checks `tsup.config.ts`/`vitest.config.ts`; `package.json` because a dependency
+    // version bump changes the types being checked against.
+    "typecheck": {
+      "dependsOn": ["^build"],
+      "inputs": ["src/**", "types/**", "*.config.ts", "tsconfig.json", "package.json"],
+      "outputs": []
+    },
+    // `**/*.tf` is here because @personal-events/infra#lint is `terraform fmt -check -recursive .`
+    // and `infra/` has no `src/`: without it the task's resolved input set was `package.json` alone,
+    // so `pnpm lint` replayed a cached PASS over HCL that `terraform fmt` rejects.
+    "lint": {
+      "dependsOn": [],
+      "inputs": ["src/**", "**/*.tf", "biome.json"],
+      "outputs": []
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "inputs": ["src/**", "exemplars/**", "vitest.config.ts", "package.json"],
+      "outputs": []
+    },
+    // These two apps ship a BUNDLE as their deployment artifact -- each a Lambda zip carrying
+    // `dist/` and no `node_modules`. Their `bundle.spec.ts` runs that emitted file in
+    // a directory outside the repo, which is the only way to catch a bundle that resolves fine under
+    // vitest and dies on import in production (this happened twice: once from a missing
+    // `noExternal`, once from esbuild's CJS interop). So their tests depend on their OWN build, not
+    // just their dependencies' -- and `tsup.config.ts` is an input, because changing it changes the
+    // artifact under test.
+    "@personal-events/webhook-ingest#test": {
+      "dependsOn": ["^build", "build"],
+      "inputs": ["src/**", "vitest.config.ts", "tsup.config.ts", "package.json"],
+      "outputs": []
+    },
+    "@personal-events/github-poller#test": {
+      "dependsOn": ["^build", "build"],
+      "inputs": ["src/**", "vitest.config.ts", "tsup.config.ts", "package.json"],
+      "outputs": []
+    },
+    // Both depend on `^build`, not `build`: `infra` has no build of its own, and the thing that
+    // must exist first is a *dependency's* output -- the webhook-ingest bundle that
+    // `data "archive_file"` zips. Terraform reads that directory at PLAN time, not just apply, so
+    // `plan` carries the dependency too. The edge is real in the package graph: `infra` declares
+    // `@personal-events/webhook-ingest` as a workspace devDependency for exactly this reason.
+    "plan": {
+      "cache": false,
+      "dependsOn": ["^build"],
+      "passThroughEnv": ["AWS_*", "TF_*"]
+    },
+    "deploy": {
+      "cache": false,
+      "dependsOn": ["^build"],
+      "passThroughEnv": ["AWS_*", "TF_*"]
+    }
+  }
+}

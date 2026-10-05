@@ -1,0 +1,24 @@
+{
+  "id": "18442311402",
+  "unread": true,
+  "reason": "security_alert",
+  "updated_at": "2026-07-19T19:02:11Z",
+  "last_read_at": null,
+  "subject": {
+    "title": "Dependabot alert: prototype pollution in a transitive dependency",
+    "url": null,
+    "latest_comment_url": null,
+    "type": "RepositoryVulnerabilityAlert"
+  },
+  "repository": {
+    "id": 845667198,
+    "name": "aws-work-eventer",
+    "full_name": "fifthdimensionengineering/aws-work-eventer",
+    "private": true,
+    "owner": { "login": "fifthdimensionengineering", "id": 178294411, "type": "Organization" },
+    "html_url": "https://github.com/fifthdimensionengineering/aws-work-eventer",
+    "url": "https://api.github.com/repos/fifthdimensionengineering/aws-work-eventer"
+  },
+  "url": "https://api.github.com/notifications/threads/18442311402",
+  "subscription_url": "https://api.github.com/notifications/threads/18442311402/subscription"
+}

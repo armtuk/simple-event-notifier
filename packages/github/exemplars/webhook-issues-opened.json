@@ -1,0 +1,33 @@
+{
+  "action": "opened",
+  "issue": {
+    "url": "https://api.github.com/repos/fifthdimensionengineering/aws-work-eventer/issues/17",
+    "repository_url": "https://api.github.com/repos/fifthdimensionengineering/aws-work-eventer",
+    "id": 3481120774,
+    "node_id": "I_kwDOMk1nfs7Wq3EG",
+    "number": 17,
+    "title": "Poller loses same-second notifications on a mid-batch consumer poll",
+    "user": { "login": "alexrmturner", "id": 1042318, "type": "User" },
+    "labels": [{ "id": 8801442, "name": "bug", "color": "d73a4a", "default": true }],
+    "state": "open",
+    "locked": false,
+    "assignee": null,
+    "assignees": [],
+    "comments": 0,
+    "created_at": "2026-07-19T18:51:04Z",
+    "updated_at": "2026-07-19T18:51:04Z",
+    "closed_at": null,
+    "author_association": "OWNER",
+    "html_url": "https://github.com/fifthdimensionengineering/aws-work-eventer/issues/17",
+    "body": "updated_at is second-precision, so every notification in a batch shares a millisecond."
+  },
+  "repository": {
+    "id": 845667198,
+    "name": "aws-work-eventer",
+    "full_name": "fifthdimensionengineering/aws-work-eventer",
+    "private": true,
+    "owner": { "login": "fifthdimensionengineering", "id": 178294411, "type": "Organization" },
+    "html_url": "https://github.com/fifthdimensionengineering/aws-work-eventer"
+  },
+  "sender": { "login": "alexrmturner", "id": 1042318, "type": "User" }
+}

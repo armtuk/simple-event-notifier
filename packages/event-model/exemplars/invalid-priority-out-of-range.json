@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "timestamp": "2026-06-28T18:44:30.123Z",
+  "eventType": "alert",
+  "priority": 9,
+  "source": "github",
+  "name": "new-pull-request",
+  "producer": "github-webhook",
+  "eventId": "abc123",
+  "acknowledged": false,
+  "handled": false,
+  "payload": {}
+}

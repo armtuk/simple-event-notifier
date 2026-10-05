@@ -2,12 +2,12 @@
 id: AWE-154
 title: GitHub payload schemas, mapping config & normalizer
 type: story
-status: Pending
+status: Implementation Adjustment
 parent: ./feature.md
 branch: github-integration
 project: https://airtable.com/appnae8GXuj1rNVoQ/tblQuFDLYQGrcoiTf/recAmtlL5Goesb0p1
 created: 2026-06-28
-updated: 2026-06-29
+updated: 2026-07-19
 ---
 
 # Story: GitHub payload schemas, mapping config & normalizer
@@ -296,3 +296,71 @@ From `.agents/general.md`, `.agents/languages/typescript/*`, `.agents/frameworks
 - Level 2: `pnpm --filter @personal-events/github typecheck`
 - Level 3: `pnpm --filter @personal-events/github test`
 - Level 4: `pnpm build && pnpm test` (root — confirms integration-core ⇄ github wiring)
+
+## Plan refresh (2026-07-19) — what changed between planning and execution
+
+| Planned assumption | Reality | Action |
+| :--- | :--- | :--- |
+| `.agents/frameworks/effect/v3/_main/schema.md` is the API reference | `.agents/cache/effect/**` does not exist here | Verified against `node_modules/effect` typings |
+| `packages/github/tsconfig.json` mirrors "bootstrap" (`composite: true`) | the repo convention is `noEmit: true`, tsup owns emit | Followed the repo |
+| `effect@3.21` | catalog pins `effect@^3.22.0` | Used `catalog:`; added the four new deps to the catalog rather than to each member (`catalogMode: strict`) |
+| the trigger discriminant `subjectType` is an optional notification field | see the design decision below | Removed from the schema and the builder |
+| "type-check each decoded result against the `@octokit/openapi-webhooks-types` type **in a spec**" | a bare `satisfies` over a `declare const` compiles to a reference to a binding that does not exist at runtime; the suite dies on import | Moved to `src/octokit-alignment.ts`, a types-only module. `tsc --noEmit` over it *is* the assertion, and it emits nothing |
+
+### Design decisions taken during implementation
+
+- **Notification triggers carry only `reason`.** The framework matches a trigger by an *exact*
+  match-key over all its fields. GitHub always sends `subject.type`, and essentially no rule wants to
+  discriminate on it — so including it would have meant every notification rule enumerating every
+  subject type, or matching nothing at all. This was caught by the specs: the first implementation
+  included `subjectType` and **every notification rule silently fell through to the default**.
+  `subjectType` is now absent from `NotificationTriggerSchema` too, so a rule that names it is
+  *rejected at load* rather than accepted-and-never-fired. The subject type still rides in `payload`.
+  - The general fix — a **specificity ladder** (try the most specific key, fall back) — is an
+    `integration-core` change with blast radius across every integration. Recorded as a follow-up in
+    `feature.md` rather than taken unilaterally.
+- **`loadGithubConfig` now enforces the trigger union.** As planned, `GithubTriggerSchema` was a real
+  `Schema.Union` — but nothing ran it against the config, because `integration-core`'s
+  `MappingConfigSchema` uses the deliberately-open `TriggerSchema`. The union was therefore
+  documentary, and the story's "non-confusable" acceptance criterion was not actually met. Added
+  `mapping-validation.ts`: every rule's trigger is decoded against the union with
+  `onExcessProperty: "error"` **before** the framework's generic load. A misspelt channel, a
+  cross-channel field, or an undefined field is now a start-up failure naming the offending trigger.
+- **`workItem` extraction.** The canonical `Event` has a `workItem` link and the normalizer is the
+  only thing that can know GitHub's. Each registry entry pairs its schema with a typed extractor
+  (`WebhookFacts`), so extraction sees the decoded struct rather than re-narrowing `unknown`: a PR's
+  `html_url`, an issue's `html_url`, a review's *pull request* (not the review), a push's `compare`,
+  a release's `html_url`, a notification's `subject.url` (omitted when null).
+- **`toCanonicalInstant` is its own module**, because the second-precision hazard needs one place to
+  be explained and one place to change if the delivery-semantics decision lands.
+
+## Deferred verification — NOT met under the code-and-dry-run fence
+
+The execution fence forbids registering a webhook against a real repository or calling the live
+GitHub API with a real PAT. One acceptance criterion depends on that and is therefore **untested**.
+It is not a failure and it is not met.
+
+| Acceptance criterion | Status | What the user must do to close it |
+| :--- | :--- | :--- |
+| Schemas are exemplar-driven from **real captured payloads** | **Unverified** | Capture one real delivery per covered event (GitHub → repo Settings → Webhooks → Recent Deliveries → *Redeliver*, or `gh api /repos/{o}/{r}/hooks/{id}/deliveries`) and one real `GET /notifications` page, replace the corresponding `packages/github/exemplars/*.json`, and re-run `pnpm --filter @personal-events/github test`. Any diff is a genuine finding |
+
+### What WAS verified in place of a live capture
+
+- **Compile-time alignment against GitHub's own definitions.** `src/octokit-alignment.ts` asserts
+  that a payload of each `@octokit/openapi-webhooks-types` type (generated from GitHub's official
+  OpenAPI description) is assignable to the corresponding subset schema. A renamed or retyped field
+  upstream breaks `pnpm typecheck`. This covers field **names and types**; it cannot cover values
+  GitHub actually sends.
+- **110 specs**, exemplar-driven: every covered webhook event/action and notification reason
+  classifies to the expected `eventType`/`priority`/`name`; unknown event and unknown reason both hit
+  the default and are written; each `invalid-*.json` fails typed with the offending field named;
+  dotted values never reach `source`/`name`; a produced key round-trips through the codec.
+
+### Validation actually run
+
+| Level | Command | Result |
+| :--- | :--- | :--- |
+| 1 — style | `pnpm --filter @personal-events/github lint` | clean |
+| 2 — types | `pnpm --filter @personal-events/github typecheck` | clean (includes the octokit alignment assertions) |
+| 3 — specs | `pnpm --filter @personal-events/github test` | 110 passed, 7 files |
+| 4 — graph | root `pnpm build && lint && test && typecheck --force` | green |

@@ -1,0 +1,24 @@
+{
+  "id": "18442311777",
+  "unread": true,
+  "reason": "subscribed",
+  "updated_at": "2026-07-19T19:05:44Z",
+  "last_read_at": null,
+  "subject": {
+    "title": "Bump the aws-sdk group across 1 directory with 3 updates",
+    "url": "https://api.github.com/repos/fifthdimensionengineering/aws-work-eventer/pulls/43",
+    "latest_comment_url": "https://api.github.com/repos/fifthdimensionengineering/aws-work-eventer/pulls/43",
+    "type": "PullRequest"
+  },
+  "repository": {
+    "id": 845667198,
+    "name": "aws-work-eventer",
+    "full_name": "fifthdimensionengineering/aws-work-eventer",
+    "private": true,
+    "owner": { "login": "fifthdimensionengineering", "id": 178294411, "type": "Organization" },
+    "html_url": "https://github.com/fifthdimensionengineering/aws-work-eventer",
+    "url": "https://api.github.com/repos/fifthdimensionengineering/aws-work-eventer"
+  },
+  "url": "https://api.github.com/notifications/threads/18442311777",
+  "subscription_url": "https://api.github.com/notifications/threads/18442311777/subscription"
+}

@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "timestamp": "2026-07-19T09:15:02.000Z",
+  "eventType": "notification",
+  "priority": 8,
+  "source": "claude-code",
+  "name": "prompt-complete",
+  "producer": "claude-code-mymachine",
+  "eventId": "4f2c9a1b7e3d6082",
+  "acknowledged": true,
+  "handled": true,
+  "payload": {}
+}

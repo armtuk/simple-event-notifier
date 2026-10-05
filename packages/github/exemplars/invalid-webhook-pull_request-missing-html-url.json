@@ -1,0 +1,16 @@
+{
+  "action": "opened",
+  "number": 42,
+  "pull_request": {
+    "id": 2118453901,
+    "number": 42,
+    "state": "open",
+    "title": "AWE-154: GitHub payload schemas, mapping config & normalizer"
+  },
+  "repository": {
+    "id": 845667198,
+    "name": "aws-work-eventer",
+    "full_name": "fifthdimensionengineering/aws-work-eventer"
+  },
+  "sender": { "login": "alexrmturner", "id": 1042318, "type": "User" }
+}

@@ -1,0 +1,4 @@
+# Copy to backend.hcl and pass with `terraform init -backend-config=backend.hcl`.
+# The values come from `terraform -chdir=../bootstrap output backend_config`.
+bucket = "tfstate.prod.personal-events.fifthdimensionengineering.com"
+region = "us-east-1"
